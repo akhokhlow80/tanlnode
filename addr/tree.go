@@ -1,9 +1,7 @@
 package addr
 
 import (
-	"fmt"
 	"math/big"
-	"net/netip"
 )
 
 type uintNode[T ~uint32 | ~uint64 | ~uint16] struct {
@@ -151,23 +149,19 @@ remove:
 	return true
 }
 
-func (tree *uintTree[T]) PutNthFree(n T) (T, bool) {
+// Call only if there's at least n free addresses.
+func (tree *uintTree[T]) PutNthFree(n T) T {
 	netStart := T(0)
 	node := tree.root
 	bit := tree.msBit
 	for {
-		// if bit == 0 {
-		// 	return 0, false
-		// }
 		if node == nil {
-			fmt.Printf("PUT %x/%d\n", netStart+n, tree.maxPrefBits)
 			if !tree.Put(netStart+n, tree.maxPrefBits) {
 				panic("never")
 			}
-			return netStart + n, true
+			return netStart + n
 		}
 
-		// is never taken from the root node => no overflow
 		leftFreeElsCnt := bit
 		if node.left != nil {
 			leftFreeElsCnt -= node.left.childrenCnt
@@ -196,4 +190,3 @@ func (tree *uintTree[T]) Size() *big.Int {
 	}
 	return size
 }
-

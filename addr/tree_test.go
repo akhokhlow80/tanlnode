@@ -223,7 +223,7 @@ func (tree *dumbUintTree) Delete(addr uint16, prefBits int) bool {
 	return false
 }
 
-func (tree *dumbUintTree) PutNthFree(n uint16) (uint16, bool) {
+func (tree *dumbUintTree) PutNthFree(n uint16) uint16 {
 	for i := uint16(0); ; i++ {
 		if !tree.els[i] {
 			if n == 0 {
@@ -235,13 +235,13 @@ func (tree *dumbUintTree) PutNthFree(n uint16) (uint16, bool) {
 				}{
 					false, i, 0,
 				})
-				return i, true
+				return i
 			} else {
 				n--
 			}
 		}
 		if i == 65535 {
-			return 0, false
+			panic("never")
 		}
 	}
 }
@@ -299,14 +299,10 @@ func TestUintTreeRandom(t *testing.T) {
 					t.Logf("tree.PutNthFree(%d)", n)
 					t.Logf("dumbTree.PutNthFree(%d)", n)
 					tree.dump(t)
-					nthAddr, ok := tree.PutNthFree(n)
-					nthDumbAddr, dumbOk := dumbTree.PutNthFree(n)
-					t.Logf("tree.PutNthFree(%d) = %x, %t", n, nthAddr, ok)
-					t.Logf("dumbTree.PutNthFree(%d) = %x, %t", n, nthDumbAddr, dumbOk)
-					if ok != dumbOk {
-						tree.dump(t)
-						t.FailNow()
-					}
+					nthAddr := tree.PutNthFree(n)
+					nthDumbAddr := dumbTree.PutNthFree(n)
+					t.Logf("tree.PutNthFree(%d) = %x", n, nthAddr)
+					t.Logf("dumbTree.PutNthFree(%d) = %x", n, nthDumbAddr)
 					if nthAddr != nthDumbAddr {
 						tree.dump(t)
 						t.FailNow()
