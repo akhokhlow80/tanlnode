@@ -3,7 +3,6 @@ package main
 import (
 	"akhokhlow80/tanlnode/nettree"
 	"akhokhlow80/tanlnode/sqlgen"
-	"akhokhlow80/tanlnode/subnets"
 	"akhokhlow80/tanlnode/tx"
 	"context"
 	"database/sql"
@@ -15,10 +14,10 @@ import (
 	"strconv"
 )
 
-func (a *node) registerSubnetHandlers(mux *http.ServeMux) {
-	mux.HandleFunc("POST /subnets/reserved", a.apiReserveSubnet)
-	mux.HandleFunc("GET /subnets/reserved", a.apiGetReserveSubnets)
-	mux.HandleFunc("DELETE /subnets/{id}", a.apiDeleteSubnet)
+func (node *node) registerSubnetHandlers(mux *http.ServeMux) {
+	mux.HandleFunc("POST /subnets/reserved", node.apiReserveSubnet)
+	mux.HandleFunc("GET /subnets/reserved", node.apiGetReservedSubnets)
+	mux.HandleFunc("DELETE /subnets/{id}", node.apiDeleteSubnet)
 }
 
 type ReserveSubnetRequest struct {
@@ -68,19 +67,19 @@ func (node *node) apiReserveSubnet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var tree *subnets.SyncedIPTree
+	var tree nettree.IPTree
 	var reservedSubnet SubnetResponse
 	err = tx.Transactional{
 		Action: func(ctx context.Context) error {
+			node.db.Lock()
+
 			if !req.MayOverlap {
 				tree, err = node.subnets.Reserve(prefix)
 				if err != nil {
 					return err
 				}
 			}
-			node.queries.Lock()
-			defer node.queries.Unlock()
-			dbSubnet, err := node.queries.AddSubnet(r.Context(), sqlgen.AddSubnetParams{
+			dbSubnet, err := node.db.AddSubnet(r.Context(), sqlgen.AddSubnetParams{
 				Prefix:     fmt.Sprintf("%s/%d", prefix.Addr().StringExpanded(), prefix.Bits()),
 				PeerID:     nil,
 				Comment:    req.Comment,
@@ -93,9 +92,15 @@ func (node *node) apiReserveSubnet(w http.ResponseWriter, r *http.Request) {
 			return nil
 		},
 		Rollback: func(ctx context.Context) error {
+			defer node.db.Unlock()
+
 			if tree != nil {
 				tree.Delete(prefix)
 			}
+			return nil
+		},
+		Commit: func(ctx context.Context) error {
+			node.db.Unlock()
 			return nil
 		},
 	}.Do(r.Context())
@@ -120,11 +125,11 @@ func (node *node) apiReserveSubnet(w http.ResponseWriter, r *http.Request) {
 // @Produce	json
 // @Success	200	{object}	[]SubnetResponse
 // @Router		/api/v1/subnets/reserved [get]
-func (node *node) apiGetReserveSubnets(w http.ResponseWriter, r *http.Request) {
+func (node *node) apiGetReservedSubnets(w http.ResponseWriter, r *http.Request) {
 	dbSubnets, err := func() ([]sqlgen.Subnet, error) {
-		node.queries.RLock()
-		defer node.queries.RUnlock()
-		return node.queries.GetReservedSubnets(r.Context())
+		node.db.RLock()
+		defer node.db.RUnlock()
+		return node.db.GetReservedSubnets(r.Context())
 	}()
 	if err != nil {
 		internalServerError(w, r, err)
@@ -155,11 +160,10 @@ func (node *node) apiDeleteSubnet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subnet, err := func() (sqlgen.Subnet, error) {
-		node.queries.Lock()
-		defer node.queries.Unlock()
-		return node.queries.GetSubnetByID(r.Context(), id)
-	}()
+	node.db.Lock()
+	defer node.db.Unlock()
+
+	subnet, err := node.db.GetSubnetByID(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respondError(w, http.StatusNotFound, "Subnet not found")
@@ -192,15 +196,11 @@ func (node *node) apiDeleteSubnet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	func() {
-		node.queries.Lock()
-		defer node.queries.Unlock()
-		_, err := node.queries.DeleteSubnet(r.Context(), id)
-		if err != nil {
-			internalServerError(w, r, err)
-			return
-		}
-	}()
+	_, err = node.db.DeleteSubnet(r.Context(), id)
+	if err != nil {
+		internalServerError(w, r, err)
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

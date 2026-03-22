@@ -25,47 +25,44 @@ DELETE FROM subnets WHERE id = @id;
 SELECT * FROM subnets
 WHERE id = @id;
 
--- -- name: AddPeer :one
--- INSERT INTO peers (
---     public_key_base64,
---     is_enabled,
---     preshared_key_base64,
---     endpoint,
---     persistent_keepalive,
---     allowed_ips,
---     owner
--- ) VALUES (
---     @public_key_base64,
---     @is_enabled,
---     @preshared_key_base64,
---     @endpoint,
---     @persistent_keepalive,
---     @allowed_ips,
---     @owner
--- )
--- RETURNING *;
+-- name: AddPeer :one
+INSERT INTO peers (
+    public_key_base64,
+    is_enabled,
+    preshared_key_base64,
+    endpoint,
+    persistent_keepalive,
+    owner
+) VALUES (
+    @public_key_base64,
+    @is_enabled,
+    @preshared_key_base64,
+    @endpoint,
+    @persistent_keepalive,
+    @owner
+)
+RETURNING *;
 
--- -- name: RemovePeer :execrows
--- DELETE FROM peers
--- WHERE public_key_base64 = @public_key_base64;
+-- name: RemovePeer :execrows
+DELETE FROM peers
+WHERE public_key_base64 = @public_key_base64;
 
--- -- name: GetPeers :many
--- SELECT * FROM peers
--- WHERE owner = COALESCE(@owner, owner)
--- ORDER BY public_key_base64;
+-- name: GetPeers :many
+SELECT * FROM peers
+WHERE owner = COALESCE(@owner, owner)
+ORDER BY public_key_base64;
 
--- -- name: GetPeerByPublicKey :one
--- SELECT * FROM peers
--- WHERE public_key_base64 = @public_key_base64
--- LIMIT 1;
+-- name: GetPeerByPublicKey :one
+SELECT * FROM peers
+WHERE public_key_base64 = @public_key_base64
+LIMIT 1;
 
--- -- name: UpdatePeer :one
--- UPDATE peers
--- SET
---     is_enabled = @is_enabled,
---     preshared_key_base64 = @preshared_key_base64,
---     endpoint = @endpoint,
---     persistent_keepalive = @persistent_keepalive,
---     allowed_ips = @allowed_ips
--- WHERE public_key_base64 = @public_key_base64
--- RETURNING *;
+-- name: UpdatePeer :execrows
+UPDATE peers
+SET
+    is_enabled = @is_enabled,
+    preshared_key_base64 = @preshared_key_base64,
+    endpoint = @endpoint,
+    persistent_keepalive = @persistent_keepalive,
+    owner = @owner
+WHERE public_key_base64 = @public_key_base64;

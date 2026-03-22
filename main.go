@@ -1,6 +1,7 @@
 package main
 
 import (
+	"akhokhlow80/tanlnode/db"
 	"akhokhlow80/tanlnode/sqlgen"
 	"akhokhlow80/tanlnode/subnets"
 	"context"
@@ -11,7 +12,6 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
-	"sync"
 
 	_ "akhokhlow80/tanlnode/docs"
 
@@ -23,39 +23,45 @@ import (
 )
 
 type config struct {
-	HTTPBind    string `env:"HTTP_BIND,required"`
-	DBPath      string `env:"DB_PATH,required"`
-	WGInterface string `env:"WG_IF,required"`
-	WGAllocNets string `env:"WG_ALLOC_NETS,required"`
+	HTTPBind              string `env:"HTTP_BIND,required"`
+	DBPath                string `env:"DB_PATH,required"`
+	WGInterface           string `env:"WG_IF,required"`
+	WGAllocNets           string `env:"WG_ALLOC_NETS,required"`
+	WGDNS                 string `env:"WG_DNS"`
+	WGMTU                 int    `env:"WG_MTU"`
+	WGPublicKey           string `env:"WG_PUBLIC_KEY,required"`
+	WGEndpoint            string `env:"WG_ENDPOINT,required"`
+	WGPersistentKeepalive int    `env:"WG_PERSISTENT_KEEPALIVE"`
 }
 
 type node struct {
-	cfg     *config
-	queries struct {
-		sync.RWMutex
-		*sqlgen.Queries
-	}
+	cfg *config
+	// db mutex is used so synchronize both db and nettree operations
+	db      db.DB
 	subnets subnets.Service
 }
 
 //go:embed sql/migrations/*.sql
 var embedMigrations embed.FS
 
-func initQueries(dbPath string) (*sqlgen.Queries, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+func (node *node) initDB(dbPath string) error {
+	var err error
+	node.db.DB, err = sql.Open("sqlite3", dbPath)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	goose.SetBaseFS(embedMigrations)
 	if err := goose.SetDialect("sqlite"); err != nil {
-		return nil, err
+		return err
 	}
-	if err := goose.Up(db, "sql/migrations"); err != nil {
-		return nil, err
+	if err := goose.Up(node.db.DB, "sql/migrations"); err != nil {
+		return err
 	}
 
-	return sqlgen.New(db), nil
+	node.db.Queries = sqlgen.New(node.db.DB)
+
+	return nil
 }
 
 func parseAllocNets(str string) ([]netip.Prefix, error) {
@@ -85,6 +91,7 @@ func parseAllocNets(str string) ([]netip.Prefix, error) {
 func (node *node) listen() {
 	apiV1 := http.NewServeMux()
 	node.registerSubnetHandlers(apiV1)
+	node.registerPeerHandlers(apiV1)
 
 	root := http.NewServeMux()
 	root.Handle("/api/v1/", http.StripPrefix("/api/v1", apiV1))
@@ -105,7 +112,7 @@ func main() {
 	var node node
 	node.cfg = &cfg
 
-	node.queries.Queries, err = initQueries(cfg.DBPath)
+	err = node.initDB(cfg.DBPath)
 	if err != nil {
 		log.Fatalf("Failed to init db: %s", err)
 	}
@@ -114,7 +121,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to parse alloc nets: %s", err)
 	}
-	node.subnets, err = subnets.NewService(context.Background(), allocNets, &node.queries)
+	node.subnets, err = subnets.NewService(context.Background(), allocNets, &node.db)
 	if err != nil {
 		log.Fatalf("Failed to init subnets service: %s", err)
 	}

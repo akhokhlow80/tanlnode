@@ -15,6 +15,130 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/peers": {
+            "get": {
+                "description": "Returns a list of peers, optionally filtered by owner",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "List peers",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Filter by owner",
+                        "name": "owner",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/main.PeerResponse"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates a new peer",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "Add a new peer",
+                "parameters": [
+                    {
+                        "description": "peer",
+                        "name": "peer",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.AddPeerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/main.NewPeerResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/peers/{pubkey}": {
+            "put": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "Update a peer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Peer key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Updated peer object",
+                        "name": "peer",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/main.UpdatePeerRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/subnets/reserved": {
             "get": {
                 "consumes": [
@@ -127,6 +251,81 @@ const docTemplate = `{
                 }
             }
         },
+        "main.AddPeerRequest": {
+            "type": "object",
+            "properties": {
+                "allowedAddresses": {
+                    "description": "List of CIDR subnets that are going to be assigned to the created peer.\nIf null, then one address (/32 for v4, /128 v6) per each configured node's net\nwill be assigned randomly.",
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "mayOverlap": {
+                                "description": "Subnet is not treated as exclusive for one peer, so it may overlap with other subnets,\nand it is not taken into account by random address allocation.",
+                                "type": "boolean"
+                            },
+                            "subnet": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "endpoint": {
+                    "type": "string"
+                },
+                "owner": {
+                    "type": "string"
+                },
+                "persistent_keepalive": {
+                    "type": "integer"
+                },
+                "preshared_key_base64": {
+                    "type": "string"
+                },
+                "public_key_base64": {
+                    "description": "omit to generate new random private key (not saved on the node)",
+                    "type": "string"
+                },
+                "random_preshared_key": {
+                    "description": "If set, then a new random preshared key will be generated.\nThis flag beign set is mutually exclusive with ` + "`" + `preshared_key_base64` + "`" + ` beign non-null.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "main.NewPeerResponse": {
+            "type": "object",
+            "properties": {
+                "config": {
+                    "$ref": "#/definitions/main.WGQuickConfig"
+                },
+                "peer": {
+                    "$ref": "#/definitions/main.PeerResponse"
+                }
+            }
+        },
+        "main.PeerResponse": {
+            "type": "object",
+            "properties": {
+                "endpoint": {
+                    "type": "string"
+                },
+                "is_enabled": {
+                    "type": "boolean"
+                },
+                "owner": {
+                    "type": "string"
+                },
+                "persistent_keepalive": {
+                    "type": "integer"
+                },
+                "preshared_key_base64": {
+                    "type": "string"
+                },
+                "public_key_base64": {
+                    "type": "string"
+                }
+            }
+        },
         "main.ReserveSubnetRequest": {
             "type": "object",
             "properties": {
@@ -156,6 +355,74 @@ const docTemplate = `{
                 },
                 "prefix": {
                     "type": "string"
+                }
+            }
+        },
+        "main.UpdatePeerRequest": {
+            "type": "object",
+            "properties": {
+                "endpoint": {
+                    "type": "string"
+                },
+                "is_enabled": {
+                    "type": "boolean"
+                },
+                "owner": {
+                    "type": "string"
+                },
+                "persistent_keepalive": {
+                    "type": "integer"
+                },
+                "preshared_key_base64": {
+                    "type": "string"
+                }
+            }
+        },
+        "main.WGQuickConfig": {
+            "type": "object",
+            "properties": {
+                "interface": {
+                    "type": "object",
+                    "properties": {
+                        "addresses": {
+                            "description": "CIDRs",
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        },
+                        "dns": {
+                            "description": "based on configuration",
+                            "type": "string"
+                        },
+                        "mtu": {
+                            "description": "based on configuration",
+                            "type": "integer"
+                        },
+                        "private_key": {
+                            "description": "is set to a newly generated one only if no public key was provided in the request",
+                            "type": "string"
+                        }
+                    }
+                },
+                "node_peer": {
+                    "type": "object",
+                    "properties": {
+                        "endpoint": {
+                            "type": "string"
+                        },
+                        "persistent_keepalive": {
+                            "description": "based on configuration",
+                            "type": "integer"
+                        },
+                        "preshared_key": {
+                            "description": "set only if preshared key was given, or random preshared key generation was requested",
+                            "type": "string"
+                        },
+                        "public_key": {
+                            "type": "string"
+                        }
+                    }
                 }
             }
         }

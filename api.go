@@ -12,6 +12,8 @@ type APIError struct {
 }
 
 func respondJSON[T any](w http.ResponseWriter, code int, result T) {
+	// TODO: send empty slices instead of nil
+
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	if err := json.NewEncoder(w).Encode(result); err != nil {

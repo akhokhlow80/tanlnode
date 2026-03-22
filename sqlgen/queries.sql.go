@@ -9,6 +9,56 @@ import (
 	"context"
 )
 
+const addPeer = `-- name: AddPeer :one
+INSERT INTO peers (
+    public_key_base64,
+    is_enabled,
+    preshared_key_base64,
+    endpoint,
+    persistent_keepalive,
+    owner
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4,
+    ?5,
+    ?6
+)
+RETURNING id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner
+`
+
+type AddPeerParams struct {
+	PublicKeyBase64     string
+	IsEnabled           bool
+	PresharedKeyBase64  *string
+	Endpoint            *string
+	PersistentKeepalive *int64
+	Owner               *string
+}
+
+func (q *Queries) AddPeer(ctx context.Context, arg AddPeerParams) (Peer, error) {
+	row := q.db.QueryRowContext(ctx, addPeer,
+		arg.PublicKeyBase64,
+		arg.IsEnabled,
+		arg.PresharedKeyBase64,
+		arg.Endpoint,
+		arg.PersistentKeepalive,
+		arg.Owner,
+	)
+	var i Peer
+	err := row.Scan(
+		&i.ID,
+		&i.PublicKeyBase64,
+		&i.IsEnabled,
+		&i.PresharedKeyBase64,
+		&i.Endpoint,
+		&i.PersistentKeepalive,
+		&i.Owner,
+	)
+	return i, err
+}
+
 const addSubnet = `-- name: AddSubnet :one
 INSERT INTO subnets (
     prefix,
@@ -93,6 +143,64 @@ func (q *Queries) GetAllSubnets(ctx context.Context) ([]Subnet, error) {
 	return items, nil
 }
 
+const getPeerByPublicKey = `-- name: GetPeerByPublicKey :one
+SELECT id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner FROM peers
+WHERE public_key_base64 = ?1
+LIMIT 1
+`
+
+func (q *Queries) GetPeerByPublicKey(ctx context.Context, publicKeyBase64 string) (Peer, error) {
+	row := q.db.QueryRowContext(ctx, getPeerByPublicKey, publicKeyBase64)
+	var i Peer
+	err := row.Scan(
+		&i.ID,
+		&i.PublicKeyBase64,
+		&i.IsEnabled,
+		&i.PresharedKeyBase64,
+		&i.Endpoint,
+		&i.PersistentKeepalive,
+		&i.Owner,
+	)
+	return i, err
+}
+
+const getPeers = `-- name: GetPeers :many
+SELECT id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner FROM peers
+WHERE owner = COALESCE(?1, owner)
+ORDER BY public_key_base64
+`
+
+func (q *Queries) GetPeers(ctx context.Context, owner *string) ([]Peer, error) {
+	rows, err := q.db.QueryContext(ctx, getPeers, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Peer
+	for rows.Next() {
+		var i Peer
+		if err := rows.Scan(
+			&i.ID,
+			&i.PublicKeyBase64,
+			&i.IsEnabled,
+			&i.PresharedKeyBase64,
+			&i.Endpoint,
+			&i.PersistentKeepalive,
+			&i.Owner,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getReservedSubnets = `-- name: GetReservedSubnets :many
 SELECT id, prefix, peer_id, comment, may_overlap FROM subnets
 WHERE peer_id IS NULL
@@ -143,4 +251,52 @@ func (q *Queries) GetSubnetByID(ctx context.Context, id int64) (Subnet, error) {
 		&i.MayOverlap,
 	)
 	return i, err
+}
+
+const removePeer = `-- name: RemovePeer :execrows
+DELETE FROM peers
+WHERE public_key_base64 = ?1
+`
+
+func (q *Queries) RemovePeer(ctx context.Context, publicKeyBase64 string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, removePeer, publicKeyBase64)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updatePeer = `-- name: UpdatePeer :execrows
+UPDATE peers
+SET
+    is_enabled = ?1,
+    preshared_key_base64 = ?2,
+    endpoint = ?3,
+    persistent_keepalive = ?4,
+    owner = ?5
+WHERE public_key_base64 = ?6
+`
+
+type UpdatePeerParams struct {
+	IsEnabled           bool
+	PresharedKeyBase64  *string
+	Endpoint            *string
+	PersistentKeepalive *int64
+	Owner               *string
+	PublicKeyBase64     string
+}
+
+func (q *Queries) UpdatePeer(ctx context.Context, arg UpdatePeerParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updatePeer,
+		arg.IsEnabled,
+		arg.PresharedKeyBase64,
+		arg.Endpoint,
+		arg.PersistentKeepalive,
+		arg.Owner,
+		arg.PublicKeyBase64,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

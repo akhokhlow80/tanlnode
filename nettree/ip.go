@@ -21,6 +21,8 @@ type IPTree interface {
 	Delete(pref netip.Prefix) bool
 	// Errors: ErrNoFreeAddr
 	AllocateRandom() (netip.Addr, error)
+	// 4 or 6
+	Version() int
 }
 
 type IP4Tree struct {
@@ -93,6 +95,10 @@ func (tree *IP4Tree) AllocateRandom() (netip.Addr, error) {
 	addr := binary.BigEndian.AppendUint32(nil, binary.BigEndian.Uint32(netAddr[:])+offset)
 
 	return netip.AddrFrom4([4]byte(addr)), nil
+}
+
+func (tree *IP4Tree) Version() int {
+	return 4
 }
 
 type IP6Tree struct {
@@ -174,4 +180,8 @@ func (tree *IP6Tree) AllocateRandom() (netip.Addr, error) {
 	copy(addr16[8:], addr8)
 
 	return netip.AddrFrom16([16]byte(addr16)), nil
+}
+
+func (tree *IP6Tree) Version() int {
+	return 6
 }

@@ -4,6 +4,16 @@
 
 package sqlgen
 
+type Peer struct {
+	ID                  int64
+	PublicKeyBase64     string
+	IsEnabled           bool
+	PresharedKeyBase64  *string
+	Endpoint            *string
+	PersistentKeepalive *int64
+	Owner               *string
+}
+
 type Subnet struct {
 	ID         int64
 	Prefix     string
