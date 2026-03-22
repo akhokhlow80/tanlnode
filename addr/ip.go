@@ -14,18 +14,29 @@ var ErrNetTooSmall = errors.New("Network is too small")
 var ErrBigNet6NotSupported = errors.New("IPv6 net with more than 2^64 hosts is not supported")
 var ErrNoFreeAddr = errors.New("No free address in a network")
 
+type IPTree interface {
+	// Errors: ErrOutOfNet, ErrOverlaps
+	Put(pref netip.Prefix) error
+	// Returns true iff subnet was found and removed.
+	Delete(pref netip.Prefix) bool
+	// Errors: ErrNoFreeAddr
+	AllocateRandom() (netip.Addr, error)
+}
+
 type IP4Tree struct {
-	net netip.Prefix
+	Net netip.Prefix // do not change after tree is created
 	uintTree[uint32]
 }
 
+var _ IPTree = (*IP4Tree)(nil)
+
 // Errors: ErrNetTooSmall
-func NewAddrTree4(net netip.Prefix) (*IP4Tree, error) {
+func NewAddrTree4(net netip.Prefix) (IP4Tree, error) {
 	if !net.Addr().Is4() {
 		panic("expected IP4 net")
 	}
 	if 32-net.Bits() < 2 {
-		return nil, ErrNetTooSmall
+		return IP4Tree{}, ErrNetTooSmall
 	}
 	tree := IP4Tree{
 		net,
@@ -37,36 +48,33 @@ func NewAddrTree4(net netip.Prefix) (*IP4Tree, error) {
 	}
 	tree.uintTree.Put(0, tree.maxPrefBits)
 	tree.uintTree.Put(^uint32(0)&tree.maxUint, tree.maxPrefBits)
-	return &tree, nil
+	return tree, nil
 }
 
-// Errors: ErrOutOfNet, ErrOverlaps
 func (tree *IP4Tree) Put(pref netip.Prefix) error {
 	if !pref.Addr().Is4() {
 		panic("expected IP4 net")
 	}
-	if !tree.net.Contains(pref.Addr()) || tree.net.Bits() > pref.Bits() {
+	if !tree.Net.Contains(pref.Addr()) || tree.Net.Bits() > pref.Bits() {
 		return ErrOutOfNet
 	}
 
 	addr := pref.Addr().As4()
-	if tree.uintTree.Put(binary.BigEndian.Uint32(addr[:])&tree.maxUint, pref.Bits()-tree.net.Bits()) {
+	if tree.uintTree.Put(binary.BigEndian.Uint32(addr[:])&tree.maxUint, pref.Bits()-tree.Net.Bits()) {
 		return nil
 	} else {
 		return ErrOverlaps
 	}
 }
 
-// Returns true iff subnet was found and removed.
 func (tree *IP4Tree) Delete(pref netip.Prefix) bool {
-	if !tree.net.Contains(pref.Addr()) || tree.net.Bits() > pref.Bits() {
+	if !tree.Net.Contains(pref.Addr()) || tree.Net.Bits() > pref.Bits() {
 		return false
 	}
 	addr := pref.Addr().As4()
-	return tree.uintTree.Delete(binary.BigEndian.Uint32(addr[:])&tree.maxUint, pref.Bits()-tree.net.Bits())
+	return tree.uintTree.Delete(binary.BigEndian.Uint32(addr[:])&tree.maxUint, pref.Bits()-tree.Net.Bits())
 }
 
-// Errors: ErrNoFreeAddr
 func (tree *IP4Tree) AllocateRandom() (netip.Addr, error) {
 	size := uint64(tree.maxUint) - tree.Size().Uint64() + 1
 	if size == 0 {
@@ -81,7 +89,7 @@ func (tree *IP4Tree) AllocateRandom() (netip.Addr, error) {
 	}
 
 	offset := tree.PutNthFree(uint32(nBig.Uint64()))
-	netAddr := tree.net.Addr().As4()
+	netAddr := tree.Net.Addr().As4()
 	addr := binary.BigEndian.AppendUint32(nil, binary.BigEndian.Uint32(netAddr[:])+offset)
 
 	return netip.AddrFrom4([4]byte(addr)), nil
@@ -92,16 +100,18 @@ type IP6Tree struct {
 	uintTree[uint64]
 }
 
+var _ IPTree = (*IP6Tree)(nil)
+
 // Errors: ErrNetTooSmall, ErrBigNet6NotSupported
-func NewAddrTree6(net netip.Prefix) (*IP6Tree, error) {
+func NewAddrTree6(net netip.Prefix) (IP6Tree, error) {
 	if !net.Addr().Is6() {
 		panic("expected IP6 net")
 	}
 	if 128-net.Bits() < 2 {
-		return nil, ErrNetTooSmall
+		return IP6Tree{}, ErrNetTooSmall
 	}
 	if 128-net.Bits() > 64 {
-		return nil, ErrBigNet6NotSupported
+		return IP6Tree{}, ErrBigNet6NotSupported
 	}
 	tree := IP6Tree{
 		net,
@@ -112,7 +122,7 @@ func NewAddrTree6(net netip.Prefix) (*IP6Tree, error) {
 		},
 	}
 	tree.uintTree.Put(0, tree.maxPrefBits)
-	return &tree, nil
+	return tree, nil
 }
 
 // Errors: ErrOutOfNet, ErrOverlaps
