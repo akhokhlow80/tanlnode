@@ -12,7 +12,7 @@ func mustCreateAddrTree4(prefix string) *IP4Tree {
 	if err != nil {
 		panic(err)
 	}
-	return tree
+	return &tree
 }
 
 func TestNewAddrTree4(t *testing.T) {
@@ -114,7 +114,7 @@ func mustCreateAddrTree6(prefix string) *IP6Tree {
 	if err != nil {
 		panic(err)
 	}
-	return tree
+	return &tree
 }
 
 func TestNewAddrTree6(t *testing.T) {
