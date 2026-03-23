@@ -4,6 +4,7 @@ import (
 	"akhokhlow80/tanlnode/db"
 	"akhokhlow80/tanlnode/sqlgen"
 	"akhokhlow80/tanlnode/subnets"
+	"akhokhlow80/tanlnode/wg"
 	"context"
 	"database/sql"
 	"embed"
@@ -16,6 +17,7 @@ import (
 	_ "akhokhlow80/tanlnode/docs"
 
 	httpSwagger "github.com/swaggo/http-swagger/v2"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/caarlos0/env/v11"
 	_ "github.com/mattn/go-sqlite3"
@@ -39,6 +41,7 @@ type node struct {
 	// db mutex is used so synchronize both db and nettree operations
 	db      db.DB
 	subnets subnets.Service
+	wg      wg.Service
 }
 
 //go:embed sql/migrations/*.sql
@@ -88,6 +91,65 @@ func parseAllocNets(str string) ([]netip.Prefix, error) {
 	return nets, nil
 }
 
+func (node *node) populateWG() error {
+	dbPeers, err := node.db.GetPeers(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	peers := make([]wg.Peer, 0, len(dbPeers))
+	for _, dbPeer := range dbPeers {
+		dbSubnets, err := node.db.GetPeerSubnets(context.Background(), &dbPeer.ID)
+		if err != nil {
+			return err
+		}
+		allowedIPs := make([]netip.Prefix, 0, len(dbSubnets))
+		for _, dbSubnet := range dbSubnets {
+			subnet, err := netip.ParsePrefix(dbSubnet.Prefix)
+			if err != nil {
+				return fmt.Errorf("Invalid subnet %s (id=%d) in DB: %s", dbSubnet.Prefix, dbSubnet.ID, err)
+			}
+			allowedIPs = append(allowedIPs, subnet)
+		}
+
+		publicKey, err := wgtypes.ParseKey(dbPeer.PublicKeyBase64)
+		if err != nil {
+			return fmt.Errorf("Invalid peer public key %s in DB: %s", dbPeer.PublicKeyBase64, err)
+		}
+		var psk *wgtypes.Key
+		if dbPeer.PresharedKeyBase64 != nil {
+			psk = new(wgtypes.Key)
+			*psk, err = wgtypes.ParseKey(*dbPeer.PresharedKeyBase64)
+			if err != nil {
+				return fmt.Errorf(
+					"Invalid peer preshared key %s (pubkey=%s) in DB: %s",
+					*dbPeer.PresharedKeyBase64,
+					dbPeer.PublicKeyBase64,
+					err,
+				)
+			}
+		}
+
+		peers = append(peers, wg.Peer{
+			PublicKey:           publicKey,
+			PresharedKey:        psk,
+			Endpoint:            dbPeer.Endpoint,
+			PersistentKeepalive: dbPeer.PersistentKeepalive,
+			AllowedIPs:          allowedIPs,
+		})
+	}
+
+	for i, peer := range peers {
+		if err := node.wg.PutPeer(&peer); err != nil {
+			log.Printf("Error adding peer to wg, rolling back")
+			for ; i >= 0; i-- {
+				node.wg.RemovePeer(peers[i].PublicKey)
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 func (node *node) listen() {
 	apiV1 := http.NewServeMux()
 	node.registerSubnetHandlers(apiV1)
@@ -124,6 +186,12 @@ func main() {
 	node.subnets, err = subnets.NewService(context.Background(), allocNets, &node.db)
 	if err != nil {
 		log.Fatalf("Failed to init subnets service: %s", err)
+	}
+
+	node.wg = wg.NewService(node.cfg.WGInterface)
+
+	if err := node.populateWG(); err != nil {
+		log.Fatalf("Failed to populate wg with peers from db: %s", err)
 	}
 
 	node.listen()

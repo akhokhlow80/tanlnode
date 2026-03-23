@@ -18,6 +18,7 @@ func (node *node) registerSubnetHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("POST /subnets/reserved", node.apiReserveSubnet)
 	mux.HandleFunc("GET /subnets/reserved", node.apiGetReservedSubnets)
 	mux.HandleFunc("DELETE /subnets/{id}", node.apiDeleteSubnet)
+	mux.HandleFunc("GET /peers/{pubkey}/subnets", node.apiGetPeerSubnets)
 }
 
 type ReserveSubnetRequest struct {
@@ -148,10 +149,10 @@ func (node *node) apiGetReservedSubnets(w http.ResponseWriter, r *http.Request) 
 // @Summary	Delete a subnet
 // @Tags		subnets
 // @Produce	json
-// @Param		key	path	string	true	"Subnet id"
+// @Param		id	path	int	true	"Subnet id"
 // @Success	204	"No content"
 // @Failure	404	{object}	APIError	"Not found"
-// @Router		/api/v1/subnets/{key} [delete]
+// @Router		/api/v1/subnets/{id} [delete]
 func (node *node) apiDeleteSubnet(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
@@ -203,4 +204,43 @@ func (node *node) apiDeleteSubnet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// @Summary	Get peer's subnets
+// @Tags		subnets
+// @Accept		json
+// @Produce	json
+// @Param		pubkey	path		string	true	"peer public key"
+// @Success	200		{object}	[]SubnetResponse
+// @Failure	404		{object}	APIError	"Peer not found"
+// @Router		/api/v1/peers/{pubkey}/subnets [get]
+func (node *node) apiGetPeerSubnets(w http.ResponseWriter, r *http.Request) {
+	pubkey := r.PathValue("pubkey")
+
+	defer node.db.RUnlock()
+	node.db.RLock()
+
+	peer, err := node.db.GetPeerByPublicKey(r.Context(), pubkey)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "Peer not found")
+			return
+		} else {
+			internalServerError(w, r, err)
+			return
+		}
+	}
+	dbSubnets, err := node.db.GetPeerSubnets(r.Context(), &peer.ID)
+	if err != nil {
+		internalServerError(w, r, err)
+		return
+	}
+
+	subnets := make([]SubnetResponse, 0, len(dbSubnets))
+	for _, dbSubnet := range dbSubnets {
+		var subnet SubnetResponse
+		subnet.fromDB(&dbSubnet)
+		subnets = append(subnets, subnet)
+	}
+	respondJSON(w, http.StatusOK, subnets)
 }

@@ -91,6 +91,39 @@ const docTemplate = `{
             }
         },
         "/api/v1/peers/{pubkey}": {
+            "get": {
+                "description": "Returns the peer identified by the given key",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "Get a peer by key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Peer key",
+                        "name": "pubkey",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.PeerResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    }
+                }
+            },
             "put": {
                 "consumes": [
                     "application/json"
@@ -106,7 +139,7 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "description": "Peer key",
-                        "name": "key",
+                        "name": "pubkey",
                         "in": "path",
                         "required": true
                     },
@@ -132,6 +165,76 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "description": "Removes the peer identified by the given key",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "peers"
+                ],
+                "summary": "Delete a peer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Peer key",
+                        "name": "pubkey",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/peers/{pubkey}/subnets": {
+            "get": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "subnets"
+                ],
+                "summary": "Get peer's subnets",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "peer public key",
+                        "name": "pubkey",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/main.SubnetResponse"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Peer not found",
                         "schema": {
                             "$ref": "#/definitions/main.APIError"
                         }
@@ -207,7 +310,7 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/subnets/{key}": {
+        "/api/v1/subnets/{id}": {
             "delete": {
                 "produces": [
                     "application/json"
@@ -218,9 +321,9 @@ const docTemplate = `{
                 "summary": "Delete a subnet",
                 "parameters": [
                     {
-                        "type": "string",
+                        "type": "integer",
                         "description": "Subnet id",
-                        "name": "key",
+                        "name": "id",
                         "in": "path",
                         "required": true
                     }
@@ -254,7 +357,7 @@ const docTemplate = `{
         "main.AddPeerRequest": {
             "type": "object",
             "properties": {
-                "allowedAddresses": {
+                "allowed_addresses": {
                     "description": "List of CIDR subnets that are going to be assigned to the created peer.\nIf null, then one address (/32 for v4, /128 v6) per each configured node's net\nwill be assigned randomly.",
                     "type": "array",
                     "items": {

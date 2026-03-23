@@ -5,6 +5,7 @@ import (
 	"akhokhlow80/tanlnode/nettree"
 	"akhokhlow80/tanlnode/sqlgen"
 	"akhokhlow80/tanlnode/tx"
+	"akhokhlow80/tanlnode/wg"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -19,9 +20,9 @@ import (
 func (node *node) registerPeerHandlers(mux *http.ServeMux) {
 	mux.HandleFunc("POST /peers", node.apiAddPeer)
 	mux.HandleFunc("GET /peers", node.listPeers)
-	// mux.HandleFunc("DELETE /peers/{pubkey}", a.deletePeer)
-	// mux.HandleFunc("GET /peers/{pubkey}", a.getPeer)
-	mux.HandleFunc("PUT /peers/{pubkey}", node.updatePeer)
+	mux.HandleFunc("DELETE /peers/{pubkey}", node.apiDeletePeer)
+	mux.HandleFunc("GET /peers/{pubkey}", node.apiGetPeerByPubkey)
+	mux.HandleFunc("PUT /peers/{pubkey}", node.apiUpdatePeer)
 }
 
 type PeerResponse struct {
@@ -60,7 +61,7 @@ type AddPeerRequest struct {
 		// Subnet is not treated as exclusive for one peer, so it may overlap with other subnets,
 		// and it is not taken into account by random address allocation.
 		MayOverlap bool
-	}
+	} `json:"allowed_addresses"`
 }
 
 type WGQuickConfig struct {
@@ -102,6 +103,8 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 	var req AddPeerRequest
 
 	// Parse
+
+	// TODO: parse endpoint
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, http.StatusBadRequest, "Invalid JSON")
@@ -276,7 +279,24 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			// TODO: Put peer to wg
+			// Add peer to wg
+			// TODO: endpoint should be parsed to avoid 500 error on malformed endpoint
+			// TODO: also providing domain name as endpoint causes wg to perform DNS lookup
+
+			wgAllowedIPs := make([]netip.Prefix, 0, len(*parsedSubnets))
+			for _, subnet := range *parsedSubnets {
+				wgAllowedIPs = append(wgAllowedIPs, subnet.Prefix)
+			}
+			err = node.wg.PutPeer(&wg.Peer{
+				PublicKey:           publicKey,
+				PresharedKey:        presharedKey,
+				Endpoint:            req.Endpoint,
+				PersistentKeepalive: req.PersistentKeepalive,
+				AllowedIPs:          wgAllowedIPs,
+			})
+			if err != nil {
+				return err
+			}
 
 			return nil
 		},
@@ -362,59 +382,99 @@ func (node *node) listPeers(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, peers)
 }
 
-// // @Summary      Delete a peer
-// // @Description  Removes the peer identified by the given key
-// // @Tags         peers
-// // @Produce      json
-// // @Param        key path string true "Peer key"
-// // @Success      204  "No content"
-// // @Failure      404  {object}  APIError
-// // @Router       /peers/{key} [delete]
-// func (node *node) deletePeer(w http.ResponseWriter, r *http.Request) {
-// 	key := r.PathValue("key")
+// @Summary		Delete a peer
+// @Description	Removes the peer identified by the given key
+// @Tags			peers
+// @Produce		json
+// @Param			pubkey	path	string	true	"Peer key"
+// @Success		204		"No content"
+// @Failure		404		{object}	APIError
+// @Router			/api/v1/peers/{pubkey} [delete]
+func (node *node) apiDeletePeer(w http.ResponseWriter, r *http.Request) {
+	publicKey, err := wgtypes.ParseKey(r.PathValue("pubkey"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid public key")
+		return
+	}
 
-// 	node.queriesMtx.Lock()
-// 	defer node.queriesMtx.Unlock()
-// 	rows, err := node.db.RemovePeer(r.Context(), key)
-// 	if err != nil {
-// 		internalServerError(w, r, err)
-// 		return
-// 	}
-// 	if rows == 0 {
-// 		respondError(w, http.StatusNotFound, "Peer not found")
-// 		return
-// 	}
+	var dbTx *sql.Tx
+	err = tx.Transactional{
+		Commit: func(ctx context.Context) error {
+			if dbTx != nil {
+				return dbTx.Commit()
+			} else {
+				return nil
+			}
+		},
+		Rollback: func(ctx context.Context) error {
+			if dbTx != nil {
+				return dbTx.Rollback()
+			} else {
+				return nil
+			}
+		},
+		Action: func(ctx context.Context) error {
+			node.db.Lock()
+			defer node.db.Unlock()
 
-// 	w.WriteHeader(http.StatusNoContent)
-// }
+			rows, err := node.db.RemovePeer(ctx, publicKey.String())
+			if err != nil {
+				return err
+			}
+			if rows == 0 {
+				return sql.ErrNoRows
+			}
 
-// // @Summary      Get a peer by key
-// // @Description  Returns the peer identified by the given key
-// // @Tags         peers
-// // @Produce      json
-// // @Param        key path string true "Peer key"
-// // @Success      200  {object}  Peer
-// // @Failure      404  {object}  APIError
-// // @Router       /peers/{key} [get]
-// func (node *node) getPeer(w http.ResponseWriter, r *http.Request) {
-// 	key := r.PathValue("key")
+			if err := node.wg.RemovePeer(publicKey); err != nil {
+				return err
+			}
 
-// 	node.queriesMtx.Lock()
-// 	defer node.queriesMtx.Unlock()
-// 	sqlPeer, err := node.db.GetPeerByPublicKey(r.Context(), key)
-// 	if err != nil {
-// 		if errors.Is(err, sql.ErrNoRows) {
-// 			respondError(w, http.StatusNotFound, "Peer not found")
-// 		} else {
-// 			internalServerError(w, r, err)
-// 		}
-// 		return
-// 	}
+			return nil
+		},
+	}.Do(r.Context())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondJSON(w, http.StatusNotFound, "Peer not found")
+			return
+		} else {
+			internalServerError(w, r, err)
+			return
+		}
+	}
 
-// 	var peer PeerResponse
-// 	peer.FromSQL(&sqlPeer)
-// 	respondJSON(w, http.StatusOK, &peer)
-// }
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// @Summary		Get a peer by key
+// @Description	Returns the peer identified by the given key
+// @Tags			peers
+// @Produce		json
+// @Param			pubkey	path		string	true	"Peer key"
+// @Success		200		{object}	PeerResponse
+// @Failure		404		{object}	APIError
+// @Router			/api/v1/peers/{pubkey} [get]
+func (node *node) apiGetPeerByPubkey(w http.ResponseWriter, r *http.Request) {
+	pubkey := r.PathValue("pubkey")
+
+	dbPeer, err := func() (sqlgen.Peer, error) {
+		node.db.Lock()
+		defer node.db.Unlock()
+		return node.db.GetPeerByPublicKey(r.Context(), pubkey)
+	}()
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondJSON(w, http.StatusBadRequest, "Peer not found")
+			return
+		} else {
+			internalServerError(w, r, err)
+			return
+		}
+	}
+
+	var peerResp PeerResponse
+	peerResp.fromDB(&dbPeer)
+	respondJSON(w, http.StatusOK, &peerResp)
+}
 
 type UpdatePeerRequest struct {
 	IsEnabled           bool    `json:"is_enabled"`
@@ -428,16 +488,21 @@ type UpdatePeerRequest struct {
 // @Tags		peers
 // @Accept		json
 // @Produce	json
-// @Param		key		path	string				true	"Peer key"
+// @Param		pubkey	path	string				true	"Peer key"
 // @Param		peer	body	UpdatePeerRequest	true	"Updated peer object"
 // @Success	204		"No content"
 // @Failure	400		{object}	APIError
 // @Failure	404		{object}	APIError
 // @Router		/api/v1/peers/{pubkey} [put]
-func (node *node) updatePeer(w http.ResponseWriter, r *http.Request) {
+func (node *node) apiUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	var err error
 
-	publicKey := r.PathValue("pubkey")
+	publicKeyBase64 := r.PathValue("pubkey")
+	publicKey, err := wgtypes.ParseKey(publicKeyBase64)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "Invalid public key")
+		return
+	}
 
 	var req UpdatePeerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -455,29 +520,90 @@ func (node *node) updatePeer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	node.db.Lock()
-	defer node.db.Unlock()
-	var updatePeer sqlgen.UpdatePeerParams
-	updatePeer.IsEnabled = req.IsEnabled
-	if presharedKey != nil {
-		updatePeer.PresharedKeyBase64 = new(string)
-		*updatePeer.PresharedKeyBase64 = presharedKey.String()
-	}
-	updatePeer.Endpoint = req.Endpoint
-	updatePeer.PersistentKeepalive = req.PersistentKeepalive
-	updatePeer.Owner = req.Owner
-	updatePeer.PublicKeyBase64 = publicKey
-	rows, err := node.db.UpdatePeer(r.Context(), updatePeer)
-	if err != nil {
-		internalServerError(w, r, err)
-		return
-	}
-	if rows == 0 {
-		respondError(w, http.StatusNotFound, "Peer not found")
-		return
-	}
+	var dbTx *sql.Tx
+	err = tx.Transactional{
+		Commit: func(ctx context.Context) error {
+			if dbTx != nil {
+				return dbTx.Commit()
+			} else {
+				return nil
+			}
+		},
+		Rollback: func(ctx context.Context) error {
+			if dbTx != nil {
+				return dbTx.Rollback()
+			} else {
+				return nil
+			}
+		},
+		Action: func(ctx context.Context) error {
+			node.db.Lock()
+			defer node.db.Unlock()
 
-	// TODO: update in wg
+			// Update in DB
+
+			var updatePeer sqlgen.UpdatePeerParams
+			updatePeer.IsEnabled = req.IsEnabled
+			if presharedKey != nil {
+				updatePeer.PresharedKeyBase64 = new(string)
+				*updatePeer.PresharedKeyBase64 = presharedKey.String()
+			}
+			updatePeer.Endpoint = req.Endpoint
+			updatePeer.PersistentKeepalive = req.PersistentKeepalive
+			updatePeer.Owner = req.Owner
+			updatePeer.PublicKeyBase64 = publicKeyBase64
+			dbPeer, err := node.db.UpdatePeer(r.Context(), updatePeer)
+			if err != nil {
+				return err
+			}
+
+			// Get last subnets
+
+			subnets, err := node.db.GetPeerSubnets(r.Context(), &dbPeer.ID)
+			if err != nil {
+				return err
+			}
+			wgAllowedIPs := make([]netip.Prefix, 0, len(subnets))
+			for _, subnet := range subnets {
+				pref, err := netip.ParsePrefix(subnet.Prefix)
+				if err != nil {
+					return fmt.Errorf("Invalid subnet %s (id=%d) in DB: %s", subnet.Prefix, subnet.ID, err)
+				}
+				wgAllowedIPs = append(wgAllowedIPs, pref)
+			}
+
+			// Remove old peer from wg
+			// Unfortunately, there's no sane way to do this transactionaly
+
+			if err := node.wg.RemovePeer(publicKey); err != nil {
+				return err
+			}
+
+			if updatePeer.IsEnabled {
+				// Add new to wg
+				if err := node.wg.PutPeer(&wg.Peer{
+					PublicKey:           publicKey,
+					PresharedKey:        presharedKey,
+					Endpoint:            req.Endpoint,
+					PersistentKeepalive: req.PersistentKeepalive,
+					AllowedIPs:          wgAllowedIPs,
+				}); err != nil {
+					return err
+				}
+			}
+
+			return nil
+		},
+	}.Do(r.Context())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "Peer not found")
+			return
+		} else {
+			internalServerError(w, r, err)
+			return
+		}
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

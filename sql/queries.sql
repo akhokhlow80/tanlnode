@@ -25,6 +25,10 @@ DELETE FROM subnets WHERE id = @id;
 SELECT * FROM subnets
 WHERE id = @id;
 
+-- name: GetPeerSubnets :many
+SELECT * FROM subnets
+WHERE peer_id = @peer_id;
+
 -- name: AddPeer :one
 INSERT INTO peers (
     public_key_base64,
@@ -57,7 +61,7 @@ SELECT * FROM peers
 WHERE public_key_base64 = @public_key_base64
 LIMIT 1;
 
--- name: UpdatePeer :execrows
+-- name: UpdatePeer :one
 UPDATE peers
 SET
     is_enabled = @is_enabled,
@@ -65,4 +69,5 @@ SET
     endpoint = @endpoint,
     persistent_keepalive = @persistent_keepalive,
     owner = @owner
-WHERE public_key_base64 = @public_key_base64;
+WHERE public_key_base64 = @public_key_base64
+RETURNING *;

@@ -8,7 +8,7 @@ definitions:
     type: object
   main.AddPeerRequest:
     properties:
-      allowedAddresses:
+      allowed_addresses:
         description: |-
           List of CIDR subnets that are going to be assigned to the created peer.
           If null, then one address (/32 for v4, /128 v6) per each configured node's net
@@ -185,13 +185,55 @@ paths:
       tags:
       - peers
   /api/v1/peers/{pubkey}:
+    delete:
+      description: Removes the peer identified by the given key
+      parameters:
+      - description: Peer key
+        in: path
+        name: pubkey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/main.APIError'
+      summary: Delete a peer
+      tags:
+      - peers
+    get:
+      description: Returns the peer identified by the given key
+      parameters:
+      - description: Peer key
+        in: path
+        name: pubkey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.PeerResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/main.APIError'
+      summary: Get a peer by key
+      tags:
+      - peers
     put:
       consumes:
       - application/json
       parameters:
       - description: Peer key
         in: path
-        name: key
+        name: pubkey
         required: true
         type: string
       - description: Updated peer object
@@ -216,14 +258,40 @@ paths:
       summary: Update a peer
       tags:
       - peers
-  /api/v1/subnets/{key}:
+  /api/v1/peers/{pubkey}/subnets:
+    get:
+      consumes:
+      - application/json
+      parameters:
+      - description: peer public key
+        in: path
+        name: pubkey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.SubnetResponse'
+            type: array
+        "404":
+          description: Peer not found
+          schema:
+            $ref: '#/definitions/main.APIError'
+      summary: Get peer's subnets
+      tags:
+      - subnets
+  /api/v1/subnets/{id}:
     delete:
       parameters:
       - description: Subnet id
         in: path
-        name: key
+        name: id
         required: true
-        type: string
+        type: integer
       produces:
       - application/json
       responses:

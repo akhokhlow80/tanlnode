@@ -164,6 +164,40 @@ func (q *Queries) GetPeerByPublicKey(ctx context.Context, publicKeyBase64 string
 	return i, err
 }
 
+const getPeerSubnets = `-- name: GetPeerSubnets :many
+SELECT id, prefix, peer_id, comment, may_overlap FROM subnets
+WHERE peer_id = ?1
+`
+
+func (q *Queries) GetPeerSubnets(ctx context.Context, peerID *int64) ([]Subnet, error) {
+	rows, err := q.db.QueryContext(ctx, getPeerSubnets, peerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Subnet
+	for rows.Next() {
+		var i Subnet
+		if err := rows.Scan(
+			&i.ID,
+			&i.Prefix,
+			&i.PeerID,
+			&i.Comment,
+			&i.MayOverlap,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getPeers = `-- name: GetPeers :many
 SELECT id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner FROM peers
 WHERE owner = COALESCE(?1, owner)
@@ -266,7 +300,7 @@ func (q *Queries) RemovePeer(ctx context.Context, publicKeyBase64 string) (int64
 	return result.RowsAffected()
 }
 
-const updatePeer = `-- name: UpdatePeer :execrows
+const updatePeer = `-- name: UpdatePeer :one
 UPDATE peers
 SET
     is_enabled = ?1,
@@ -275,6 +309,7 @@ SET
     persistent_keepalive = ?4,
     owner = ?5
 WHERE public_key_base64 = ?6
+RETURNING id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner
 `
 
 type UpdatePeerParams struct {
@@ -286,8 +321,8 @@ type UpdatePeerParams struct {
 	PublicKeyBase64     string
 }
 
-func (q *Queries) UpdatePeer(ctx context.Context, arg UpdatePeerParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, updatePeer,
+func (q *Queries) UpdatePeer(ctx context.Context, arg UpdatePeerParams) (Peer, error) {
+	row := q.db.QueryRowContext(ctx, updatePeer,
 		arg.IsEnabled,
 		arg.PresharedKeyBase64,
 		arg.Endpoint,
@@ -295,8 +330,15 @@ func (q *Queries) UpdatePeer(ctx context.Context, arg UpdatePeerParams) (int64, 
 		arg.Owner,
 		arg.PublicKeyBase64,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+	var i Peer
+	err := row.Scan(
+		&i.ID,
+		&i.PublicKeyBase64,
+		&i.IsEnabled,
+		&i.PresharedKeyBase64,
+		&i.Endpoint,
+		&i.PersistentKeepalive,
+		&i.Owner,
+	)
+	return i, err
 }
