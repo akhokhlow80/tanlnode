@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"reflect"
 )
 
 type APIError struct {
@@ -12,11 +13,16 @@ type APIError struct {
 }
 
 func respondJSON[T any](w http.ResponseWriter, code int, result T) {
-	// TODO: send empty slices instead of nil
-
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
-	if err := json.NewEncoder(w).Encode(result); err != nil {
+
+	var err error
+	if reflect.TypeOf(result).Kind() == reflect.Array && reflect.ValueOf(result).IsNil() {
+		err = json.NewEncoder(w).Encode([]struct{}{})
+	} else {
+		err = json.NewEncoder(w).Encode([]struct{}{})
+	}
+	if err != nil {
 		log.Printf("Error writing json: %s", err)
 	}
 }
