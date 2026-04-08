@@ -27,6 +27,7 @@ import (
 type config struct {
 	HTTPBind              string `env:"HTTP_BIND,required"`
 	DBPath                string `env:"DB_PATH,required"`
+	WGExecPath            string `env:"WG_EXEC_PATH,required"`
 	WGInterface           string `env:"WG_IF,required"`
 	WGAllocNets           string `env:"WG_ALLOC_NETS,required"`
 	WGDNS                 string `env:"WG_DNS"`
@@ -188,7 +189,7 @@ func main() {
 		log.Fatalf("Failed to init subnets service: %s", err)
 	}
 
-	node.wg = wg.NewService(node.cfg.WGInterface)
+	node.wg = wg.NewService(node.cfg.WGInterface, node.cfg.WGExecPath)
 
 	if err := node.populateWG(); err != nil {
 		log.Fatalf("Failed to populate wg with peers from db: %s", err)
