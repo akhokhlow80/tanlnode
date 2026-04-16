@@ -117,13 +117,13 @@ func (node *node) populateWG() error {
 			return fmt.Errorf("Invalid peer public key %s in DB: %s", dbPeer.PublicKeyBase64, err)
 		}
 		var psk *wgtypes.Key
-		if dbPeer.PresharedKeyBase64 != nil {
+		if len(dbPeer.PresharedKeyBase64) != 0 {
 			psk = new(wgtypes.Key)
-			*psk, err = wgtypes.ParseKey(*dbPeer.PresharedKeyBase64)
+			*psk, err = wgtypes.ParseKey(dbPeer.PresharedKeyBase64)
 			if err != nil {
 				return fmt.Errorf(
 					"Invalid peer preshared key %s (pubkey=%s) in DB: %s",
-					*dbPeer.PresharedKeyBase64,
+					dbPeer.PresharedKeyBase64,
 					dbPeer.PublicKeyBase64,
 					err,
 				)

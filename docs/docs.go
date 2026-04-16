@@ -358,7 +358,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "allowed_addresses": {
-                    "description": "List of CIDR subnets that are going to be assigned to the created peer.\nIf null, then one address (/32 for v4, /128 v6) per each configured node's net\nwill be assigned randomly.",
+                    "description": "List of CIDR subnets that are going to be assigned to the created peer.\nIf empty, then one address (/32 for v4, /128 v6) per each configured node's net\nwill be assigned randomly.",
                     "type": "array",
                     "items": {
                         "type": "object",
@@ -374,19 +374,23 @@ const docTemplate = `{
                     }
                 },
                 "endpoint": {
+                    "description": "optional",
                     "type": "string"
                 },
                 "owner": {
+                    "description": "optional",
                     "type": "string"
                 },
                 "persistent_keepalive": {
+                    "description": "optional",
                     "type": "integer"
                 },
                 "preshared_key_base64": {
+                    "description": "optional",
                     "type": "string"
                 },
                 "public_key_base64": {
-                    "description": "omit to generate new random private key (not saved on the node)",
+                    "description": "optional, omit to generate new random private key (not saved on the node)",
                     "type": "string"
                 },
                 "random_preshared_key": {
@@ -410,18 +414,22 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "endpoint": {
+                    "description": "optional",
                     "type": "string"
                 },
                 "is_enabled": {
                     "type": "boolean"
                 },
                 "owner": {
+                    "description": "optional",
                     "type": "string"
                 },
                 "persistent_keepalive": {
+                    "description": "optional",
                     "type": "integer"
                 },
                 "preshared_key_base64": {
+                    "description": "optional",
                     "type": "string"
                 },
                 "public_key_base64": {
@@ -465,18 +473,22 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "endpoint": {
+                    "description": "optional",
                     "type": "string"
                 },
                 "is_enabled": {
                     "type": "boolean"
                 },
                 "owner": {
+                    "description": "optional",
                     "type": "string"
                 },
                 "persistent_keepalive": {
+                    "description": "optional",
                     "type": "integer"
                 },
                 "preshared_key_base64": {
+                    "description": "optional",
                     "type": "string"
                 }
             }
@@ -495,15 +507,15 @@ const docTemplate = `{
                             }
                         },
                         "dns": {
-                            "description": "based on configuration",
+                            "description": "based on configuration (optional)",
                             "type": "string"
                         },
                         "mtu": {
-                            "description": "based on configuration",
+                            "description": "based on configuration (optional)",
                             "type": "integer"
                         },
                         "private_key": {
-                            "description": "is set to a newly generated one only if no public key was provided in the request",
+                            "description": "set to a newly generated one only if no public key was provided in the request",
                             "type": "string"
                         }
                     }
@@ -515,7 +527,7 @@ const docTemplate = `{
                             "type": "string"
                         },
                         "persistent_keepalive": {
-                            "description": "based on configuration",
+                            "description": "based on configuration (optional)",
                             "type": "integer"
                         },
                         "preshared_key": {

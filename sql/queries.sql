@@ -53,7 +53,7 @@ WHERE public_key_base64 = @public_key_base64;
 
 -- name: GetPeers :many
 SELECT * FROM peers
-WHERE owner = COALESCE(@owner, owner)
+WHERE owner = COALESCE(sqlc.narg('owner'), owner)
 ORDER BY public_key_base64;
 
 -- name: GetPeerByPublicKey :one

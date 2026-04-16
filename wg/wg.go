@@ -23,8 +23,8 @@ func NewService(interfaceName string, wgPath string) Service {
 type Peer struct {
 	PublicKey           wgtypes.Key
 	PresharedKey        *wgtypes.Key
-	Endpoint            *string
-	PersistentKeepalive *int64
+	Endpoint            string // optional
+	PersistentKeepalive int64  // optional
 	AllowedIPs          []netip.Prefix
 }
 
@@ -50,11 +50,11 @@ func (s *Service) PutPeer(p *Peer) error {
 		}
 		args = append(args, "preshared-key", tempFile.Name())
 	}
-	if p.Endpoint != nil {
-		args = append(args, "endpoint", *p.Endpoint)
+	if len(p.Endpoint) != 0 {
+		args = append(args, "endpoint", p.Endpoint)
 	}
-	if p.PersistentKeepalive != nil {
-		args = append(args, "persistent-keepalive", strconv.Itoa(int(*p.PersistentKeepalive)))
+	if p.PersistentKeepalive != 0 {
+		args = append(args, "persistent-keepalive", strconv.Itoa(int(p.PersistentKeepalive)))
 	}
 	if len(p.AllowedIPs) > 0 {
 		var sb strings.Builder

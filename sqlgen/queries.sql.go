@@ -31,10 +31,10 @@ RETURNING id, public_key_base64, is_enabled, preshared_key_base64, endpoint, per
 type AddPeerParams struct {
 	PublicKeyBase64     string
 	IsEnabled           bool
-	PresharedKeyBase64  *string
-	Endpoint            *string
-	PersistentKeepalive *int64
-	Owner               *string
+	PresharedKeyBase64  string
+	Endpoint            string
+	PersistentKeepalive int64
+	Owner               string
 }
 
 func (q *Queries) AddPeer(ctx context.Context, arg AddPeerParams) (Peer, error) {
@@ -314,10 +314,10 @@ RETURNING id, public_key_base64, is_enabled, preshared_key_base64, endpoint, per
 
 type UpdatePeerParams struct {
 	IsEnabled           bool
-	PresharedKeyBase64  *string
-	Endpoint            *string
-	PersistentKeepalive *int64
-	Owner               *string
+	PresharedKeyBase64  string
+	Endpoint            string
+	PersistentKeepalive int64
+	Owner               string
 	PublicKeyBase64     string
 }
 

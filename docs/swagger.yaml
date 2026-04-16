@@ -11,7 +11,7 @@ definitions:
       allowed_addresses:
         description: |-
           List of CIDR subnets that are going to be assigned to the created peer.
-          If null, then one address (/32 for v4, /128 v6) per each configured node's net
+          If empty, then one address (/32 for v4, /128 v6) per each configured node's net
           will be assigned randomly.
         items:
           properties:
@@ -25,15 +25,20 @@ definitions:
           type: object
         type: array
       endpoint:
+        description: optional
         type: string
       owner:
+        description: optional
         type: string
       persistent_keepalive:
+        description: optional
         type: integer
       preshared_key_base64:
+        description: optional
         type: string
       public_key_base64:
-        description: omit to generate new random private key (not saved on the node)
+        description: optional, omit to generate new random private key (not saved
+          on the node)
         type: string
       random_preshared_key:
         description: |-
@@ -51,14 +56,18 @@ definitions:
   main.PeerResponse:
     properties:
       endpoint:
+        description: optional
         type: string
       is_enabled:
         type: boolean
       owner:
+        description: optional
         type: string
       persistent_keepalive:
+        description: optional
         type: integer
       preshared_key_base64:
+        description: optional
         type: string
       public_key_base64:
         type: string
@@ -87,14 +96,18 @@ definitions:
   main.UpdatePeerRequest:
     properties:
       endpoint:
+        description: optional
         type: string
       is_enabled:
         type: boolean
       owner:
+        description: optional
         type: string
       persistent_keepalive:
+        description: optional
         type: integer
       preshared_key_base64:
+        description: optional
         type: string
     type: object
   main.WGQuickConfig:
@@ -107,14 +120,14 @@ definitions:
               type: string
             type: array
           dns:
-            description: based on configuration
+            description: based on configuration (optional)
             type: string
           mtu:
-            description: based on configuration
+            description: based on configuration (optional)
             type: integer
           private_key:
-            description: is set to a newly generated one only if no public key was
-              provided in the request
+            description: set to a newly generated one only if no public key was provided
+              in the request
             type: string
         type: object
       node_peer:
@@ -122,7 +135,7 @@ definitions:
           endpoint:
             type: string
           persistent_keepalive:
-            description: based on configuration
+            description: based on configuration (optional)
             type: integer
           preshared_key:
             description: set only if preshared key was given, or random preshared

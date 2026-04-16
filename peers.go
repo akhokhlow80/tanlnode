@@ -26,12 +26,12 @@ func (node *node) registerPeerHandlers(mux *http.ServeMux) {
 }
 
 type PeerResponse struct {
-	PublicKeyBase64     string  `json:"public_key_base64"`
-	IsEnabled           bool    `json:"is_enabled"`
-	PresharedKeyBase64  *string `json:"preshared_key_base64"`
-	Endpoint            *string `json:"endpoint"`
-	PersistentKeepalive *int64  `json:"persistent_keepalive"`
-	Owner               *string `json:"owner"`
+	PublicKeyBase64     string `json:"public_key_base64"`
+	IsEnabled           bool   `json:"is_enabled"`
+	PresharedKeyBase64  string `json:"preshared_key_base64"` // optional
+	Endpoint            string `json:"endpoint"`             // optional
+	PersistentKeepalive int64  `json:"persistent_keepalive"` // optional
+	Owner               string `json:"owner"`                // optional
 }
 
 func (resp *PeerResponse) fromDB(p *sqlgen.Peer) {
@@ -44,19 +44,19 @@ func (resp *PeerResponse) fromDB(p *sqlgen.Peer) {
 }
 
 type AddPeerRequest struct {
-	// omit to generate new random private key (not saved on the node)
-	PublicKeyBase64    *string `json:"public_key_base64"`
-	PresharedKeyBase64 *string `json:"preshared_key_base64"`
+	// optional, omit to generate new random private key (not saved on the node)
+	PublicKeyBase64    string `json:"public_key_base64"`
+	PresharedKeyBase64 string `json:"preshared_key_base64"` // optional
 	// If set, then a new random preshared key will be generated.
 	// This flag beign set is mutually exclusive with `preshared_key_base64` beign non-null.
-	RandomPresharedKey  bool    `json:"random_preshared_key"`
-	Endpoint            *string `json:"endpoint"`
-	PersistentKeepalive *int64  `json:"persistent_keepalive"`
-	Owner               *string `json:"owner"`
+	RandomPresharedKey  bool   `json:"random_preshared_key"`
+	Endpoint            string `json:"endpoint"`             // optional
+	PersistentKeepalive int64  `json:"persistent_keepalive"` // optional
+	Owner               string `json:"owner"`                // optional
 	// List of CIDR subnets that are going to be assigned to the created peer.
-	// If null, then one address (/32 for v4, /128 v6) per each configured node's net
+	// If empty, then one address (/32 for v4, /128 v6) per each configured node's net
 	// will be assigned randomly.
-	AllowedAddresses *[]struct {
+	AllowedAddresses []struct {
 		Subnet string
 		// Subnet is not treated as exclusive for one peer, so it may overlap with other subnets,
 		// and it is not taken into account by random address allocation.
@@ -66,22 +66,22 @@ type AddPeerRequest struct {
 
 type WGQuickConfig struct {
 	Interface struct {
-		// is set to a newly generated one only if no public key was provided in the request
-		PrivateKey *string `json:"private_key"`
+		// set to a newly generated one only if no public key was provided in the request
+		PrivateKey string `json:"private_key"`
 		// CIDRs
 		Addresses []string `json:"addresses"`
-		// based on configuration
-		DNS *string `json:"dns"`
-		// based on configuration
-		MTU *int `json:"mtu"`
+		// based on configuration (optional)
+		DNS string `json:"dns"`
+		// based on configuration (optional)
+		MTU int `json:"mtu"`
 	} `json:"interface"`
 	NodePeer struct {
 		PublicKey string `json:"public_key"`
-		// set only if preshared key was given, or random preshared key generation was requested
-		PresharedKey *string `json:"preshared_key"`
-		Endpoint     string  `json:"endpoint"`
-		// based on configuration
-		PersistentKeepalive *int `json:"persistent_keepalive"`
+		// optional; set only if preshared key was given, or random preshared key generation was requested
+		PresharedKey string `json:"preshared_key"`
+		Endpoint     string `json:"endpoint"`
+		// based on configuration (optional)
+		PersistentKeepalive int `json:"persistent_keepalive"`
 	} `json:"node_peer"`
 }
 
@@ -114,22 +114,20 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 	type ParsedSubnet struct {
 		Prefix     netip.Prefix
 		MayOverlap bool
+		Added      bool
 	}
-	var parsedSubnets *[]ParsedSubnet
-	if req.AllowedAddresses != nil {
-		parsedSubnetsSlice := make([]ParsedSubnet, 0, len(*req.AllowedAddresses))
-		for _, subnet := range *req.AllowedAddresses {
-			prefix, err := netip.ParsePrefix(subnet.Subnet)
-			if err != nil {
-				respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid subnet %s", subnet.Subnet))
-				return
-			}
-			parsedSubnetsSlice = append(parsedSubnetsSlice, ParsedSubnet{
-				Prefix:     prefix,
-				MayOverlap: subnet.MayOverlap,
-			})
+	parsedSubnets := make([]ParsedSubnet, 0, len(req.AllowedAddresses))
+	for _, subnet := range req.AllowedAddresses {
+		prefix, err := netip.ParsePrefix(subnet.Subnet)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("Invalid subnet %s", subnet.Subnet))
+			return
 		}
-		parsedSubnets = &parsedSubnetsSlice
+		parsedSubnets = append(parsedSubnets, ParsedSubnet{
+			Prefix:     prefix,
+			MayOverlap: subnet.MayOverlap,
+			Added:      false,
+		})
 	}
 
 	// Generate keys if needed
@@ -140,7 +138,13 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 		publicKey                wgtypes.Key
 	)
 
-	if req.PublicKeyBase64 == nil {
+	if len(req.PublicKeyBase64) != 0 {
+		publicKey, err = wgtypes.ParseKey(req.PublicKeyBase64)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "Invalid public key")
+			return
+		}
+	} else {
 		newPrivateKey, err := wgtypes.GeneratePrivateKey()
 		if err != nil {
 			internalServerError(w, r, err)
@@ -148,16 +152,10 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 		}
 		privateKey = &newPrivateKey
 		publicKey = privateKey.PublicKey()
-	} else {
-		publicKey, err = wgtypes.ParseKey(*req.PublicKeyBase64)
-		if err != nil {
-			respondError(w, http.StatusBadRequest, "Invalid public key")
-			return
-		}
 	}
 
-	if req.PresharedKeyBase64 != nil {
-		parsedPresharedKey, err := wgtypes.ParseKey(*req.PresharedKeyBase64)
+	if len(req.PresharedKeyBase64) != 0 {
+		parsedPresharedKey, err := wgtypes.ParseKey(req.PresharedKeyBase64)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "Invalid preshared key")
 			return
@@ -180,6 +178,7 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 	var dbPeer sqlgen.Peer
 	err = tx.Transactional{
 		Commit: func(ctx context.Context) error {
+			defer node.db.Unlock()
 			if dbTx != nil {
 				return dbTx.Commit()
 			} else {
@@ -187,14 +186,15 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 			}
 		},
 		Rollback: func(ctx context.Context) error {
+			defer node.db.Unlock()
 			var err error
 			if dbTx != nil {
 				err = dbTx.Rollback()
 			}
 
 			// Remove subnets that possibly were added to netrees
-			if parsedSubnets != nil {
-				for _, subnet := range *parsedSubnets {
+			for _, subnet := range parsedSubnets {
+				if subnet.Added {
 					node.subnets.Delete(subnet.Prefix)
 				}
 			}
@@ -202,7 +202,6 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 		},
 		Action: func(ctx context.Context) error {
 			node.db.Lock()
-			defer node.db.Unlock()
 
 			dbTx, err = node.db.BeginTx(r.Context(), nil)
 			if err != nil {
@@ -215,21 +214,20 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 			addPeer.PublicKeyBase64 = publicKey.String()
 			addPeer.IsEnabled = true
 			if presharedKey != nil {
-				addPeer.PresharedKeyBase64 = new(string)
-				*addPeer.PresharedKeyBase64 = presharedKey.String()
+				addPeer.PresharedKeyBase64 = presharedKey.String()
 			}
 			addPeer.Endpoint = req.Endpoint
 			addPeer.PersistentKeepalive = req.PersistentKeepalive
 			addPeer.Owner = req.Owner
-			dbPeer, err = node.db.AddPeer(r.Context(), addPeer)
+			dbPeer, err = node.db.WithTx(dbTx).AddPeer(r.Context(), addPeer)
 			if err != nil {
 				return err
 			}
 
 			// Reserve or allocate subnets in nettree
 
-			if parsedSubnets != nil {
-				for _, subnet := range *parsedSubnets {
+			if len(parsedSubnets) != 0 {
+				for i, subnet := range parsedSubnets {
 					if subnet.MayOverlap {
 						continue
 					}
@@ -237,14 +235,14 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 					if err != nil {
 						return err
 					}
+					parsedSubnets[i].Added = true
 				}
 			} else {
 				randomAddrs, err := node.subnets.AssignRandomInEachNet()
 				if err != nil {
 					return err
 				}
-				parsedSubnetsSlice := make([]ParsedSubnet, 0, len(randomAddrs))
-				parsedSubnets = &parsedSubnetsSlice
+				parsedSubnets = make([]ParsedSubnet, 0, len(randomAddrs))
 				for _, randomAddr := range randomAddrs {
 					var maskBits int
 					if randomAddr.Is4() {
@@ -254,17 +252,18 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 					} else {
 						panic("never")
 					}
-					parsedSubnetsSlice = append(parsedSubnetsSlice, ParsedSubnet{
+					parsedSubnets = append(parsedSubnets, ParsedSubnet{
 						Prefix:     netip.PrefixFrom(randomAddr, maskBits),
 						MayOverlap: false,
+						Added:      true,
 					})
 				}
 			}
 
 			// Put addresses to DB
 
-			for _, pSubnet := range *parsedSubnets {
-				_, err := node.db.AddSubnet(ctx, sqlgen.AddSubnetParams{
+			for _, pSubnet := range parsedSubnets {
+				_, err := node.db.WithTx(dbTx).AddSubnet(ctx, sqlgen.AddSubnetParams{
 					Prefix: fmt.Sprintf(
 						"%s/%d",
 						pSubnet.Prefix.Addr().StringExpanded(),
@@ -283,8 +282,8 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 			// TODO: endpoint should be parsed to avoid 500 error on malformed endpoint
 			// TODO: also providing domain name as endpoint causes wg to perform DNS lookup
 
-			wgAllowedIPs := make([]netip.Prefix, 0, len(*parsedSubnets))
-			for _, subnet := range *parsedSubnets {
+			wgAllowedIPs := make([]netip.Prefix, 0, len(parsedSubnets))
+			for _, subnet := range parsedSubnets {
 				wgAllowedIPs = append(wgAllowedIPs, subnet.Prefix)
 			}
 			err = node.wg.PutPeer(&wg.Peer{
@@ -306,7 +305,13 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusConflict, "Peer with such public key already exists")
 			return
 		} else if errors.Is(err, nettree.ErrNoFreeAddr) {
-			respondError(w, http.StatusBadRequest, "No free addresses left for random allocation")
+			respondError(w, http.StatusInternalServerError, "No free addresses left for random allocation")
+			return
+		} else if errors.Is(err, nettree.ErrOverlaps) {
+			respondError(w, http.StatusConflict, "Given addresses overlaps with the existing")
+			return
+		} else if errors.Is(err, nettree.ErrOutOfNet) {
+			respondError(w, http.StatusConflict, "Given addresses are out of the interface nets")
 			return
 		} else {
 			internalServerError(w, r, err)
@@ -319,30 +324,26 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 
 	// [Interface]
 	if privateKey != nil {
-		resp.Config.Interface.PrivateKey = new(string)
-		*resp.Config.Interface.PrivateKey = privateKey.String()
+		resp.Config.Interface.PrivateKey = privateKey.String()
 	}
-	resp.Config.Interface.Addresses = make([]string, 0, len(*parsedSubnets))
-	for _, subnet := range *parsedSubnets {
+	resp.Config.Interface.Addresses = make([]string, 0, len(parsedSubnets))
+	for _, subnet := range parsedSubnets {
 		resp.Config.Interface.Addresses = append(resp.Config.Interface.Addresses, subnet.Prefix.String())
 	}
 	if len(node.cfg.WGDNS) != 0 {
-		resp.Config.Interface.DNS = &node.cfg.WGDNS
+		resp.Config.Interface.DNS = node.cfg.WGDNS
 	}
 	if node.cfg.WGMTU != 0 {
-		resp.Config.Interface.MTU = &node.cfg.WGMTU
+		resp.Config.Interface.MTU = node.cfg.WGMTU
 	}
 
 	// [Peer]
 	resp.Config.NodePeer.PublicKey = node.cfg.WGPublicKey
 	if presharedKey != nil {
-		resp.Config.NodePeer.PresharedKey = new(string)
-		*resp.Config.NodePeer.PresharedKey = presharedKey.String()
+		resp.Config.NodePeer.PresharedKey = presharedKey.String()
 	}
 	resp.Config.NodePeer.Endpoint = node.cfg.WGEndpoint
-	if node.cfg.WGPersistentKeepalive != 0 {
-		resp.Config.NodePeer.PersistentKeepalive = &node.cfg.WGPersistentKeepalive
-	}
+	resp.Config.NodePeer.PersistentKeepalive = node.cfg.WGPersistentKeepalive
 
 	respondJSON(w, http.StatusCreated, resp)
 }
@@ -356,16 +357,18 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 // @Failure		400		{object}	APIError
 // @Router			/api/v1/peers [get]
 func (node *node) listPeers(w http.ResponseWriter, r *http.Request) {
-	var owner *string
-	if r.URL.Query().Has("owner") {
-		owner = new(string)
-		*owner = r.URL.Query().Get("owner")
+	owner := r.URL.Query().Get("owner")
+	var ownerOrNil *string
+	if len(owner) != 0 {
+		ownerOrNil = &owner
+	} else {
+		ownerOrNil = nil
 	}
 
 	sqlPeers, err := func() ([]sqlgen.Peer, error) {
 		defer node.db.RUnlock()
 		node.db.RLock()
-		return node.db.GetPeers(r.Context(), owner)
+		return node.db.GetPeers(r.Context(), ownerOrNil)
 	}()
 	if err != nil {
 		internalServerError(w, r, err)
@@ -477,11 +480,11 @@ func (node *node) apiGetPeerByPubkey(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdatePeerRequest struct {
-	IsEnabled           bool    `json:"is_enabled"`
-	PresharedKeyBase64  *string `json:"preshared_key_base64"`
-	Endpoint            *string `json:"endpoint"`
-	PersistentKeepalive *int64  `json:"persistent_keepalive"`
-	Owner               *string `json:"owner"`
+	IsEnabled           bool   `json:"is_enabled"`
+	PresharedKeyBase64  string `json:"preshared_key_base64"` // optional
+	Endpoint            string `json:"endpoint"`             // optional
+	PersistentKeepalive int64  `json:"persistent_keepalive"` // optional
+	Owner               string `json:"owner"`                // optional
 }
 
 // @Summary	Update a peer
@@ -511,9 +514,9 @@ func (node *node) apiUpdatePeer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var presharedKey *wgtypes.Key
-	if req.PresharedKeyBase64 != nil {
+	if len(req.PresharedKeyBase64) != 0 {
 		presharedKey = new(wgtypes.Key)
-		*presharedKey, err = wgtypes.ParseKey(*req.PresharedKeyBase64)
+		*presharedKey, err = wgtypes.ParseKey(req.PresharedKeyBase64)
 		if err != nil {
 			respondError(w, http.StatusBadRequest, "Invalid preshared key")
 			return
@@ -545,8 +548,7 @@ func (node *node) apiUpdatePeer(w http.ResponseWriter, r *http.Request) {
 			var updatePeer sqlgen.UpdatePeerParams
 			updatePeer.IsEnabled = req.IsEnabled
 			if presharedKey != nil {
-				updatePeer.PresharedKeyBase64 = new(string)
-				*updatePeer.PresharedKeyBase64 = presharedKey.String()
+				updatePeer.PresharedKeyBase64 = presharedKey.String()
 			}
 			updatePeer.Endpoint = req.Endpoint
 			updatePeer.PersistentKeepalive = req.PersistentKeepalive
