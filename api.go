@@ -17,10 +17,10 @@ func respondJSON[T any](w http.ResponseWriter, code int, result T) {
 	w.WriteHeader(code)
 
 	var err error
-	if reflect.TypeOf(result).Kind() == reflect.Array && reflect.ValueOf(result).IsNil() {
+	if reflect.TypeOf(result).Kind() == reflect.Slice && reflect.ValueOf(result).IsNil() {
 		err = json.NewEncoder(w).Encode([]struct{}{})
 	} else {
-		err = json.NewEncoder(w).Encode([]struct{}{})
+		err = json.NewEncoder(w).Encode(result)
 	}
 	if err != nil {
 		log.Printf("Error writing json: %s", err)
