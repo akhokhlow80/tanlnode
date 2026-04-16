@@ -25,16 +25,17 @@ import (
 )
 
 type config struct {
-	HTTPBind              string `env:"HTTP_BIND,required"`
-	DBPath                string `env:"DB_PATH,required"`
-	WGExecPath            string `env:"WG_EXEC_PATH,required"`
-	WGInterface           string `env:"WG_IF,required"`
-	WGAllocNets           string `env:"WG_ALLOC_NETS,required"`
-	WGDNS                 string `env:"WG_DNS"`
-	WGMTU                 int    `env:"WG_MTU"`
-	WGPublicKey           string `env:"WG_PUBLIC_KEY,required"`
-	WGEndpoint            string `env:"WG_ENDPOINT,required"`
-	WGPersistentKeepalive int    `env:"WG_PERSISTENT_KEEPALIVE"`
+	HTTPBind              string   `env:"HTTP_BIND,required"`
+	DBPath                string   `env:"DB_PATH,required"`
+	WGExecPath            string   `env:"WG_EXEC_PATH,required"`
+	WGInterface           string   `env:"WG_IF,required"`
+	WGAllocNets           string   `env:"WG_ALLOC_NETS,required"`
+	WGDNS                 string   `env:"WG_DNS"`
+	WGMTU                 int      `env:"WG_MTU"`
+	WGPublicKey           string   `env:"WG_PUBLIC_KEY,required"`
+	WGEndpointHost        string   `env:"WG_ENDPOINT_HOST,required"`
+	WGEndpointPorts       []uint16 `env:"WG_ENDPOINT_PORTS,required"`
+	WGPersistentKeepalive int      `env:"WG_PERSISTENT_KEEPALIVE"`
 }
 
 type node struct {

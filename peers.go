@@ -7,10 +7,12 @@ import (
 	"akhokhlow80/tanlnode/tx"
 	"akhokhlow80/tanlnode/wg"
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/netip"
 
@@ -172,10 +174,11 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Add to DB and nettrees
+	// Add to DB and nettrees & pick a random port
 
 	var dbTx *sql.Tx
 	var dbPeer sqlgen.Peer
+	var endpointPort uint16
 	err = tx.Transactional{
 		Commit: func(ctx context.Context) error {
 			defer node.db.Unlock()
@@ -297,6 +300,18 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 
+			// Pick a random port
+
+			endpointPortIndex, err := rand.Int(
+				rand.Reader,
+				big.NewInt(int64(len(node.cfg.WGEndpointPorts))),
+			)
+			if err != nil {
+				return err
+			}
+
+			endpointPort = node.cfg.WGEndpointPorts[endpointPortIndex.Int64()]
+
 			return nil
 		},
 	}.Do(r.Context())
@@ -342,8 +357,8 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 	if presharedKey != nil {
 		resp.Config.NodePeer.PresharedKey = presharedKey.String()
 	}
-	resp.Config.NodePeer.Endpoint = node.cfg.WGEndpoint
 	resp.Config.NodePeer.PersistentKeepalive = node.cfg.WGPersistentKeepalive
+	resp.Config.NodePeer.Endpoint = fmt.Sprintf("%s:%d", node.cfg.WGEndpointHost, endpointPort)
 
 	respondJSON(w, http.StatusCreated, resp)
 }
