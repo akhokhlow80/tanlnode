@@ -6,13 +6,18 @@ import (
 	"akhokhlow80/tanlnode/subnets"
 	"akhokhlow80/tanlnode/wg"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
+	"time"
 
 	_ "akhokhlow80/tanlnode/docs"
 
@@ -27,6 +32,10 @@ import (
 type config struct {
 	HTTPBind              string   `env:"HTTP_BIND,required"`
 	DBPath                string   `env:"DB_PATH,required"`
+	TLSDisable            bool     `env:"TLS_DISABLE"`
+	TLSClientCertPath     string   `env:"TLS_CLIENT_CERT,required"`
+	TLSServerCertPath     string   `env:"TLS_SERVER_CERT,required"`
+	TLSServerKeyPath      string   `env:"TLS_SERVER_KEY,required"`
 	WGExecPath            string   `env:"WG_EXEC_PATH,required"`
 	WGInterface           string   `env:"WG_IF,required"`
 	WGAllocNets           string   `env:"WG_ALLOC_NETS,required"`
@@ -152,7 +161,37 @@ func (node *node) populateWG() error {
 	return nil
 }
 
-func (node *node) listen() {
+func (node *node) makeTLSConfig() (*tls.Config, error) {
+	if node.cfg.TLSDisable {
+		return nil, nil
+	}
+
+	servCert, err := tls.LoadX509KeyPair(node.cfg.TLSServerCertPath, node.cfg.TLSServerKeyPath)
+	if err != nil {
+		return nil, err
+	}
+	clientCertBytes, err := os.ReadFile(node.cfg.TLSClientCertPath)
+	if err != nil {
+		return nil, err
+	}
+	clientCertPool := x509.NewCertPool()
+	if !clientCertPool.AppendCertsFromPEM(clientCertBytes) {
+		return nil, errors.New("failed to parse client cert")
+	}
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{servCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    clientCertPool,
+	}, nil
+}
+
+func (node *node) listen() error {
+	tlsCfg, err := node.makeTLSConfig()
+	if err != nil {
+		return err
+	}
+
 	apiV1 := http.NewServeMux()
 	node.registerSubnetHandlers(apiV1)
 	node.registerPeerHandlers(apiV1)
@@ -164,7 +203,14 @@ func (node *node) listen() {
 		httpSwagger.URL("/swagger/doc.json"),
 	))
 	log.Printf("Binding to %s", node.cfg.HTTPBind)
-	log.Fatal(http.ListenAndServe(node.cfg.HTTPBind, root))
+	server := http.Server{
+		Addr:         node.cfg.HTTPBind,
+		Handler:      root,
+		TLSConfig:    tlsCfg,
+		ReadTimeout:  20 * time.Second,
+		WriteTimeout: 100 * time.Second,
+	}
+	return server.ListenAndServeTLS("", "")
 }
 
 func main() {
