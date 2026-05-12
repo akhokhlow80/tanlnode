@@ -12,12 +12,13 @@ import (
 )
 
 type Service struct {
-	ifce   string
-	wgPath string
+	ifce        string
+	wgExecPath  string
+	wgNetNSPath string
 }
 
-func NewService(interfaceName string, wgPath string) Service {
-	return Service{ifce: interfaceName, wgPath: wgPath}
+func NewService(interfaceName string, wgPath string, wgNetNSPath string) Service {
+	return Service{ifce: interfaceName, wgExecPath: wgPath, wgNetNSPath: wgNetNSPath}
 }
 
 type Peer struct {
@@ -67,22 +68,30 @@ func (s *Service) PutPeer(p *Peer) error {
 		args = append(args, "allowed-ips", sb.String())
 	}
 
-	log.Printf("[#] %s %s", s.wgPath, strings.Join(args, " "))
-	output, err := exec.Command(s.wgPath, args...).CombinedOutput()
-	if err != nil {
-		log.Printf("%s failed: %s: %s", s.wgPath, err, output)
-		return err
-	}
-
-	return nil
+	return s.execWGCmd(args)
 }
 
 func (s *Service) RemovePeer(publicKey wgtypes.Key) error {
-	args := []string{"set", s.ifce, "peer", publicKey.String(), "remove"}
-	log.Printf("[#] %s %s", s.wgPath, strings.Join(args, " "))
-	output, err := exec.Command(s.wgPath, args...).CombinedOutput()
+	return s.execWGCmd([]string{"set", s.ifce, "peer", publicKey.String(), "remove"})
+}
+
+func (s *Service) execWGCmd(wgArgs []string) error {
+	var (
+		args []string
+		cmd  string
+	)
+	if len(s.wgNetNSPath) != 0 {
+		cmd = "nsenter"
+		args = []string{"--net=" + s.wgNetNSPath, "--", s.wgExecPath}
+		args = append(args, wgArgs...)
+	} else {
+		cmd = s.wgExecPath
+		args = wgArgs
+	}
+	log.Printf("[#] %s %s", cmd, strings.Join(args, " "))
+	output, err := exec.Command(cmd, args...).CombinedOutput()
 	if err != nil {
-		log.Printf("%s failed: %s: %s", s.wgPath, err, output)
+		log.Printf("%s failed: %s: %s", cmd, err, output)
 		return err
 	}
 	return nil

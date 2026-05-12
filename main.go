@@ -37,6 +37,7 @@ type config struct {
 	TLSServerCertPath     string   `env:"TLS_SERVER_CERT,required"`
 	TLSServerKeyPath      string   `env:"TLS_SERVER_KEY,required"`
 	WGExecPath            string   `env:"WG_EXEC_PATH,required"`
+	WGNetNamespacePath    string   `env:"WG_NETNS_PATH"`
 	WGInterface           string   `env:"WG_IF,required"`
 	WGAllocNets           string   `env:"WG_ALLOC_NETS,required"`
 	WGDNS                 string   `env:"WG_DNS"`
@@ -236,11 +237,11 @@ func main() {
 		log.Fatalf("Failed to init subnets service: %s", err)
 	}
 
-	node.wg = wg.NewService(node.cfg.WGInterface, node.cfg.WGExecPath)
+	node.wg = wg.NewService(node.cfg.WGInterface, node.cfg.WGExecPath, node.cfg.WGNetNamespacePath)
 
 	if err := node.populateWG(); err != nil {
 		log.Fatalf("Failed to populate wg with peers from db: %s", err)
 	}
 
-	node.listen()
+	log.Fatal(node.listen())
 }
