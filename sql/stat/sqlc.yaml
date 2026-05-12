@@ -5,7 +5,7 @@ sql:
     schema: "migrations"
     gen:
       go:
-        package: "sqlgen"
-        out: "../sqlgen"
+        package: "sqlstat"
+        out: "../../sqlgen/sqlstat"
         emit_pointers_for_null_types: true
         overrides:

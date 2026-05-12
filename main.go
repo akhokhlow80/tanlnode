@@ -2,7 +2,7 @@ package main
 
 import (
 	"akhokhlow80/tanlnode/db"
-	"akhokhlow80/tanlnode/sqlgen"
+	"akhokhlow80/tanlnode/sqlgen/sqlpeers"
 	"akhokhlow80/tanlnode/subnets"
 	"akhokhlow80/tanlnode/wg"
 	"context"

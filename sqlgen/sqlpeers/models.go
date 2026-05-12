@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.30.0
 
-package sqlgen
+package sqlpeers
 
 type Peer struct {
 	ID                  int64
