@@ -30,7 +30,8 @@ import (
 )
 
 type config struct {
-	HTTPBind              string   `env:"HTTP_BIND,required"`
+	HTTPSBind             string   `env:"HTTPS_BIND,required"`
+	HTTPBind              string   `env:"HTTP_BIND"`
 	DBPath                string   `env:"DB_PATH,required"`
 	TLSDisable            bool     `env:"TLS_DISABLE"`
 	TLSClientCertPath     string   `env:"TLS_CLIENT_CERT,required"`
@@ -187,12 +188,7 @@ func (node *node) makeTLSConfig() (*tls.Config, error) {
 	}, nil
 }
 
-func (node *node) listen() error {
-	tlsCfg, err := node.makeTLSConfig()
-	if err != nil {
-		return err
-	}
-
+func (node *node) createAPIMux() *http.ServeMux {
 	apiV1 := http.NewServeMux()
 	node.registerSubnetHandlers(apiV1)
 	node.registerPeerHandlers(apiV1)
@@ -203,15 +199,35 @@ func (node *node) listen() error {
 	root.Handle("/swagger/", httpSwagger.Handler(
 		httpSwagger.URL("/swagger/doc.json"),
 	))
-	log.Printf("Binding to %s", node.cfg.HTTPBind)
+	return root
+}
+
+func (node *node) listenHTTPS() error {
+	tlsCfg, err := node.makeTLSConfig()
+	if err != nil {
+		return err
+	}
+
+	log.Printf("Binding to %s (HTTPS)", node.cfg.HTTPSBind)
 	server := http.Server{
-		Addr:         node.cfg.HTTPBind,
-		Handler:      root,
+		Addr:         node.cfg.HTTPSBind,
+		Handler:      node.createAPIMux(),
 		TLSConfig:    tlsCfg,
 		ReadTimeout:  20 * time.Second,
 		WriteTimeout: 100 * time.Second,
 	}
 	return server.ListenAndServeTLS("", "")
+}
+
+func (node *node) listenHTTP() error {
+	log.Printf("WARNING: Binding to %s to listen plaintext HTTP with no authentication", node.cfg.HTTPBind)
+	server := http.Server{
+		Addr:         node.cfg.HTTPBind,
+		Handler:      node.createAPIMux(),
+		ReadTimeout:  20 * time.Second,
+		WriteTimeout: 100 * time.Second,
+	}
+	return server.ListenAndServe()
 }
 
 func main() {
@@ -243,5 +259,10 @@ func main() {
 		log.Fatalf("Failed to populate wg with peers from db: %s", err)
 	}
 
-	log.Fatal(node.listen())
+	go func() {
+		if len(node.cfg.HTTPBind) != 0 {
+			log.Fatal(node.listenHTTP())
+		}
+	}()
+	log.Fatal(node.listenHTTPS())
 }
