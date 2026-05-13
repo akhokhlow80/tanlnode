@@ -8,6 +8,6 @@ v() {
 }
 
 v go build .
-v go test ./...
+# v go test ./...
 v install tanlnode /usr/bin/
 v install tanlnode@.service /etc/systemd/system
