@@ -3,7 +3,6 @@ Description=tanlnode
 
 [Service]
 Type=simple
-Environment=WG_IF=%i
 EnvironmentFile=/etc/tanlnode/%i/config
 ExecStart=/usr/bin/tanlnode
 
