@@ -23,10 +23,11 @@ type IPTree interface {
 	AllocateRandom() (netip.Addr, error)
 	// 4 or 6
 	Version() int
+	Prefix() netip.Prefix
 }
 
 type IP4Tree struct {
-	Net netip.Prefix // do not change after tree is created
+	net netip.Prefix // do not change after tree is created
 	uintTree[uint32]
 }
 
@@ -57,12 +58,12 @@ func (tree *IP4Tree) Put(pref netip.Prefix) error {
 	if !pref.Addr().Is4() {
 		panic("expected IP4 net")
 	}
-	if !tree.Net.Contains(pref.Addr()) || tree.Net.Bits() > pref.Bits() {
+	if !tree.net.Contains(pref.Addr()) || tree.net.Bits() > pref.Bits() {
 		return ErrOutOfNet
 	}
 
 	addr := pref.Addr().As4()
-	if tree.uintTree.Put(binary.BigEndian.Uint32(addr[:])&tree.maxUint, pref.Bits()-tree.Net.Bits()) {
+	if tree.uintTree.Put(binary.BigEndian.Uint32(addr[:])&tree.maxUint, pref.Bits()-tree.net.Bits()) {
 		return nil
 	} else {
 		return ErrOverlaps
@@ -70,11 +71,11 @@ func (tree *IP4Tree) Put(pref netip.Prefix) error {
 }
 
 func (tree *IP4Tree) Delete(pref netip.Prefix) bool {
-	if !tree.Net.Contains(pref.Addr()) || tree.Net.Bits() > pref.Bits() {
+	if !tree.net.Contains(pref.Addr()) || tree.net.Bits() > pref.Bits() {
 		return false
 	}
 	addr := pref.Addr().As4()
-	return tree.uintTree.Delete(binary.BigEndian.Uint32(addr[:])&tree.maxUint, pref.Bits()-tree.Net.Bits())
+	return tree.uintTree.Delete(binary.BigEndian.Uint32(addr[:])&tree.maxUint, pref.Bits()-tree.net.Bits())
 }
 
 func (tree *IP4Tree) AllocateRandom() (netip.Addr, error) {
@@ -91,7 +92,7 @@ func (tree *IP4Tree) AllocateRandom() (netip.Addr, error) {
 	}
 
 	offset := tree.PutNthFree(uint32(nBig.Uint64()))
-	netAddr := tree.Net.Addr().As4()
+	netAddr := tree.net.Addr().As4()
 	addr := binary.BigEndian.AppendUint32(nil, binary.BigEndian.Uint32(netAddr[:])+offset)
 
 	return netip.AddrFrom4([4]byte(addr)), nil
@@ -99,6 +100,10 @@ func (tree *IP4Tree) AllocateRandom() (netip.Addr, error) {
 
 func (tree *IP4Tree) Version() int {
 	return 4
+}
+
+func (tree *IP4Tree) Prefix() netip.Prefix {
+	return tree.net
 }
 
 type IP6Tree struct {
@@ -184,4 +189,8 @@ func (tree *IP6Tree) AllocateRandom() (netip.Addr, error) {
 
 func (tree *IP6Tree) Version() int {
 	return 6
+}
+
+func (tree *IP6Tree) Prefix() netip.Prefix {
+	return tree.net
 }

@@ -94,9 +94,10 @@ func (s *Service) Delete(pref netip.Prefix) bool {
 }
 
 // Deletes assigned addresses on failure.
-func (s *Service) AssignRandomInEachNet() ([]netip.Addr, error) {
+func (s *Service) AssignRandomInEachNet() ([]netip.Addr, []nettree.IPTree, error) {
 	var err error
 	addrs := make([]netip.Addr, 0, len(s.netTrees))
+	trees := make([]nettree.IPTree, 0, len(s.netTrees))
 	for _, tree := range s.netTrees {
 		var addr netip.Addr
 		addr, err = tree.AllocateRandom()
@@ -104,12 +105,13 @@ func (s *Service) AssignRandomInEachNet() ([]netip.Addr, error) {
 			goto error
 		}
 		addrs = append(addrs, addr)
+		trees = append(trees, tree)
 	}
-	return addrs, nil
+	return addrs, trees, nil
 
 error:
 	for i := range addrs {
 		s.netTrees[i].Delete(utils.MakePrefixFromAddr(addrs[i]))
 	}
-	return nil, err
+	return nil, nil, err
 }

@@ -116,7 +116,7 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 	type ParsedSubnet struct {
 		Prefix     netip.Prefix
 		MayOverlap bool
-		Added      bool
+		Tree       nettree.IPTree
 	}
 	parsedSubnets := make([]ParsedSubnet, 0, len(req.AllowedAddresses))
 	for _, subnet := range req.AllowedAddresses {
@@ -128,7 +128,7 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 		parsedSubnets = append(parsedSubnets, ParsedSubnet{
 			Prefix:     prefix,
 			MayOverlap: subnet.MayOverlap,
-			Added:      false,
+			Tree:       nil,
 		})
 	}
 
@@ -197,8 +197,8 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 
 			// Remove subnets that possibly were added to netrees
 			for _, subnet := range parsedSubnets {
-				if subnet.Added {
-					node.subnets.Delete(subnet.Prefix)
+				if subnet.Tree != nil {
+					subnet.Tree.Delete(subnet.Prefix)
 				}
 			}
 			return err
@@ -234,31 +234,30 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 					if subnet.MayOverlap {
 						continue
 					}
-					_, err := node.subnets.Reserve(subnet.Prefix)
+					parsedSubnets[i].Tree, err = node.subnets.Reserve(subnet.Prefix)
 					if err != nil {
 						return err
 					}
-					parsedSubnets[i].Added = true
 				}
 			} else {
-				randomAddrs, err := node.subnets.AssignRandomInEachNet()
+				randomAddrs, trees, err := node.subnets.AssignRandomInEachNet()
 				if err != nil {
 					return err
 				}
 				parsedSubnets = make([]ParsedSubnet, 0, len(randomAddrs))
-				for _, randomAddr := range randomAddrs {
+				for i := range randomAddrs {
 					var maskBits int
-					if randomAddr.Is4() {
+					if randomAddrs[i].Is4() {
 						maskBits = 32
-					} else if randomAddr.Is6() {
+					} else if randomAddrs[i].Is6() {
 						maskBits = 128
 					} else {
 						panic("never")
 					}
 					parsedSubnets = append(parsedSubnets, ParsedSubnet{
-						Prefix:     netip.PrefixFrom(randomAddr, maskBits),
+						Prefix:     netip.PrefixFrom(randomAddrs[i], maskBits),
 						MayOverlap: false,
-						Added:      true,
+						Tree:       trees[i],
 					})
 				}
 			}
@@ -283,7 +282,7 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 
 			// Add peer to wg
 			// TODO: endpoint should be parsed to avoid 500 error on malformed endpoint
-			// TODO: also providing domain name as endpoint causes wg to perform DNS lookup
+			// TODO: also, providing domain name as endpoint causes wg to perform DNS lookup
 
 			wgAllowedIPs := make([]netip.Prefix, 0, len(parsedSubnets))
 			for _, subnet := range parsedSubnets {
@@ -343,7 +342,11 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Config.Interface.Addresses = make([]string, 0, len(parsedSubnets))
 	for _, subnet := range parsedSubnets {
-		resp.Config.Interface.Addresses = append(resp.Config.Interface.Addresses, subnet.Prefix.String())
+		bits := subnet.Tree.Prefix().Bits()
+		resp.Config.Interface.Addresses = append(
+			resp.Config.Interface.Addresses,
+			fmt.Sprintf("%s/%d", subnet.Prefix.Addr().String(), bits),
+		)
 	}
 	if len(node.cfg.WGDNS) != 0 {
 		resp.Config.Interface.DNS = node.cfg.WGDNS
