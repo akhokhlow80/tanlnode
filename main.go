@@ -22,7 +22,6 @@ import (
 	_ "akhokhlow80/tanlnode/docs"
 
 	httpSwagger "github.com/swaggo/http-swagger/v2"
-	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/caarlos0/env/v11"
 	_ "github.com/mattn/go-sqlite3"
@@ -30,31 +29,35 @@ import (
 )
 
 type config struct {
-	HTTPSBind             string   `env:"HTTPS_BIND,required"`
-	HTTPBind              string   `env:"HTTP_BIND"`
-	DBPath                string   `env:"DB_PATH,required"`
-	TLSDisable            bool     `env:"TLS_DISABLE"`
-	TLSClientCertPath     string   `env:"TLS_CLIENT_CERT,required"`
-	TLSServerCertPath     string   `env:"TLS_SERVER_CERT,required"`
-	TLSServerKeyPath      string   `env:"TLS_SERVER_KEY,required"`
-	WGExecPath            string   `env:"WG_EXEC_PATH,required"`
-	WGNetNamespacePath    string   `env:"WG_NETNS_PATH"`
-	WGInterface           string   `env:"WG_IF,required"`
-	WGAllocNets           string   `env:"WG_ALLOC_NETS,required"`
-	WGDNS                 string   `env:"WG_DNS"`
-	WGMTU                 int      `env:"WG_MTU"`
-	WGPublicKey           string   `env:"WG_PUBLIC_KEY,required"`
-	WGEndpointHost        string   `env:"WG_ENDPOINT_HOST,required"`
-	WGEndpointPorts       []uint16 `env:"WG_ENDPOINT_PORTS,required"`
-	WGPersistentKeepalive int      `env:"WG_PERSISTENT_KEEPALIVE"`
+	HTTPSBind               string   `env:"HTTPS_BIND,required"`
+	HTTPBind                string   `env:"HTTP_BIND"`
+	DBPath                  string   `env:"DB_PATH,required"`
+	TLSDisable              bool     `env:"TLS_DISABLE"`
+	TLSClientCertPath       string   `env:"TLS_CLIENT_CERT,required"`
+	TLSServerCertPath       string   `env:"TLS_SERVER_CERT,required"`
+	TLSServerKeyPath        string   `env:"TLS_SERVER_KEY,required"`
+	WGExecPath              string   `env:"WG_EXEC_PATH,required"`
+	WGNetNamespacePath      string   `env:"WG_NETNS_PATH"`
+	WGInterface             string   `env:"WG_IF,required"`
+	WGAllocNets             string   `env:"WG_ALLOC_NETS,required"`
+	WGDNS                   string   `env:"WG_DNS"`
+	WGMTU                   int      `env:"WG_MTU"`
+	WGPublicKey             string   `env:"WG_PUBLIC_KEY,required"`
+	WGEndpointHost          string   `env:"WG_ENDPOINT_HOST,required"`
+	WGEndpointPorts         []uint16 `env:"WG_ENDPOINT_PORTS,required"`
+	WGPersistentKeepalive   int      `env:"WG_PERSISTENT_KEEPALIVE"`
+	StatCollectIntervalSecs int      `env:"STAT_COLLECT_INTERVAL_SEC,required"`
+	StatRollupAfterSecs     int      `env:"STAT_ROLLUP_AFTER_SECS,required"`
+	StatRollupIntervalSecs  int      `env:"STAT_ROLLUP_INTERVAL_SECS,required"`
 }
 
 type node struct {
 	cfg *config
 	// db mutex is used so synchronize both db and nettree operations
-	db      db.DB
-	subnets subnets.Service
-	wg      wg.Service
+	db             db.DB
+	subnets        subnets.Service
+	wg             wg.Service
+	peerStatsCache *peerStatsCache
 }
 
 //go:embed sql/migrations/*.sql
@@ -104,65 +107,6 @@ func parseAllocNets(str string) ([]netip.Prefix, error) {
 	return nets, nil
 }
 
-func (node *node) populateWG() error {
-	dbPeers, err := node.db.GetPeers(context.Background(), nil)
-	if err != nil {
-		return err
-	}
-	peers := make([]wg.Peer, 0, len(dbPeers))
-	for _, dbPeer := range dbPeers {
-		dbSubnets, err := node.db.GetPeerSubnets(context.Background(), &dbPeer.ID)
-		if err != nil {
-			return err
-		}
-		allowedIPs := make([]netip.Prefix, 0, len(dbSubnets))
-		for _, dbSubnet := range dbSubnets {
-			subnet, err := netip.ParsePrefix(dbSubnet.Prefix)
-			if err != nil {
-				return fmt.Errorf("Invalid subnet %s (id=%d) in DB: %s", dbSubnet.Prefix, dbSubnet.ID, err)
-			}
-			allowedIPs = append(allowedIPs, subnet)
-		}
-
-		publicKey, err := wgtypes.ParseKey(dbPeer.PublicKeyBase64)
-		if err != nil {
-			return fmt.Errorf("Invalid peer public key %s in DB: %s", dbPeer.PublicKeyBase64, err)
-		}
-		var psk *wgtypes.Key
-		if len(dbPeer.PresharedKeyBase64) != 0 {
-			psk = new(wgtypes.Key)
-			*psk, err = wgtypes.ParseKey(dbPeer.PresharedKeyBase64)
-			if err != nil {
-				return fmt.Errorf(
-					"Invalid peer preshared key %s (pubkey=%s) in DB: %s",
-					dbPeer.PresharedKeyBase64,
-					dbPeer.PublicKeyBase64,
-					err,
-				)
-			}
-		}
-
-		peers = append(peers, wg.Peer{
-			PublicKey:           publicKey,
-			PresharedKey:        psk,
-			Endpoint:            dbPeer.Endpoint,
-			PersistentKeepalive: dbPeer.PersistentKeepalive,
-			AllowedIPs:          allowedIPs,
-		})
-	}
-
-	for i, peer := range peers {
-		if err := node.wg.PutPeer(&peer); err != nil {
-			log.Printf("Error adding peer to wg, rolling back")
-			for ; i >= 0; i-- {
-				node.wg.RemovePeer(peers[i].PublicKey)
-			}
-			return err
-		}
-	}
-	return nil
-}
-
 func (node *node) makeTLSConfig() (*tls.Config, error) {
 	if node.cfg.TLSDisable {
 		return nil, nil
@@ -192,6 +136,7 @@ func (node *node) createAPIMux() *http.ServeMux {
 	apiV1 := http.NewServeMux()
 	node.registerSubnetHandlers(apiV1)
 	node.registerPeerHandlers(apiV1)
+	node.registerStatsHandlers(apiV1)
 
 	root := http.NewServeMux()
 	root.Handle("/api/v1/", http.StripPrefix("/api/v1", apiV1))
@@ -255,14 +200,20 @@ func main() {
 
 	node.wg = wg.NewService(node.cfg.WGInterface, node.cfg.WGExecPath, node.cfg.WGNetNamespacePath)
 
-	if err := node.populateWG(); err != nil {
-		log.Fatalf("Failed to populate wg with peers from db: %s", err)
+	node.peerStatsCache = newPeerStatsCache()
+	if err := node.prepareWGAndPeerStatsCache(context.Background()); err != nil {
+		log.Fatalf("Failed to prepare wg and peer stats cache: %s", err)
 	}
+	if err := node.rollupOldStats(context.Background()); err != nil {
+		log.Fatalf("Failed to rollup old stats: %s", err)
+	}
+	go node.collectStatsRoutine(context.Background())
+	go node.rollupOldStatsRoutine(context.Background())
 
-	go func() {
-		if len(node.cfg.HTTPBind) != 0 {
+	if len(node.cfg.HTTPBind) != 0 {
+		go func() {
 			log.Fatal(node.listenHTTP())
-		}
-	}()
+		}()
+	}
 	log.Fatal(node.listenHTTPS())
 }

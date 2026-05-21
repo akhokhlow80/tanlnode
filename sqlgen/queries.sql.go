@@ -7,9 +7,11 @@ package sqlgen
 
 import (
 	"context"
+	"time"
 )
 
 const addPeer = `-- name: AddPeer :one
+
 INSERT INTO peers (
     public_key_base64,
     is_enabled,
@@ -25,7 +27,7 @@ INSERT INTO peers (
     ?5,
     ?6
 )
-RETURNING id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner
+RETURNING id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner, latest_handshake_at, latest_endpoint
 `
 
 type AddPeerParams struct {
@@ -37,6 +39,7 @@ type AddPeerParams struct {
 	Owner               string
 }
 
+// - ======= Peers =======
 func (q *Queries) AddPeer(ctx context.Context, arg AddPeerParams) (Peer, error) {
 	row := q.db.QueryRowContext(ctx, addPeer,
 		arg.PublicKeyBase64,
@@ -55,11 +58,14 @@ func (q *Queries) AddPeer(ctx context.Context, arg AddPeerParams) (Peer, error) 
 		&i.Endpoint,
 		&i.PersistentKeepalive,
 		&i.Owner,
+		&i.LatestHandshakeAt,
+		&i.LatestEndpoint,
 	)
 	return i, err
 }
 
 const addSubnet = `-- name: AddSubnet :one
+
 INSERT INTO subnets (
     prefix,
     peer_id,
@@ -80,6 +86,7 @@ type AddSubnetParams struct {
 	MayOverlap bool
 }
 
+// - ======= Subnets =======
 func (q *Queries) AddSubnet(ctx context.Context, arg AddSubnetParams) (Subnet, error) {
 	row := q.db.QueryRowContext(ctx, addSubnet,
 		arg.Prefix,
@@ -143,8 +150,33 @@ func (q *Queries) GetAllSubnets(ctx context.Context) ([]Subnet, error) {
 	return items, nil
 }
 
+const getLastPeerStat = `-- name: GetLastPeerStat :one
+SELECT id, timestamp_ms, peer_id, rx, tx FROM peer_stats
+WHERE peer_id = ?1 AND coalesce(timestamp_ms <= ?2, TRUE)
+ORDER BY timestamp_ms DESC
+LIMIT 1
+`
+
+type GetLastPeerStatParams struct {
+	PeerID  int64
+	UntilMs *int64
+}
+
+func (q *Queries) GetLastPeerStat(ctx context.Context, arg GetLastPeerStatParams) (PeerStat, error) {
+	row := q.db.QueryRowContext(ctx, getLastPeerStat, arg.PeerID, arg.UntilMs)
+	var i PeerStat
+	err := row.Scan(
+		&i.ID,
+		&i.TimestampMs,
+		&i.PeerID,
+		&i.Rx,
+		&i.Tx,
+	)
+	return i, err
+}
+
 const getPeerByPublicKey = `-- name: GetPeerByPublicKey :one
-SELECT id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner FROM peers
+SELECT id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner, latest_handshake_at, latest_endpoint FROM peers
 WHERE public_key_base64 = ?1
 LIMIT 1
 `
@@ -160,6 +192,8 @@ func (q *Queries) GetPeerByPublicKey(ctx context.Context, publicKeyBase64 string
 		&i.Endpoint,
 		&i.PersistentKeepalive,
 		&i.Owner,
+		&i.LatestHandshakeAt,
+		&i.LatestEndpoint,
 	)
 	return i, err
 }
@@ -199,7 +233,7 @@ func (q *Queries) GetPeerSubnets(ctx context.Context, peerID *int64) ([]Subnet, 
 }
 
 const getPeers = `-- name: GetPeers :many
-SELECT id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner FROM peers
+SELECT id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner, latest_handshake_at, latest_endpoint FROM peers
 WHERE owner = COALESCE(?1, owner)
 ORDER BY public_key_base64
 `
@@ -221,6 +255,8 @@ func (q *Queries) GetPeers(ctx context.Context, owner *string) ([]Peer, error) {
 			&i.Endpoint,
 			&i.PersistentKeepalive,
 			&i.Owner,
+			&i.LatestHandshakeAt,
+			&i.LatestEndpoint,
 		); err != nil {
 			return nil, err
 		}
@@ -287,6 +323,57 @@ func (q *Queries) GetSubnetByID(ctx context.Context, id int64) (Subnet, error) {
 	return i, err
 }
 
+const putPeerStat = `-- name: PutPeerStat :one
+
+INSERT INTO peer_stats (
+    timestamp_ms,
+    peer_id,
+    rx,
+    tx
+) VALUES (
+    ?1,
+    ?2,
+    ?3,
+    ?4
+) RETURNING id, timestamp_ms, peer_id, rx, tx
+`
+
+type PutPeerStatParams struct {
+	TimestampMs int64
+	PeerID      int64
+	Rx          int64
+	Tx          int64
+}
+
+// - ======= Stats =======
+func (q *Queries) PutPeerStat(ctx context.Context, arg PutPeerStatParams) (PeerStat, error) {
+	row := q.db.QueryRowContext(ctx, putPeerStat,
+		arg.TimestampMs,
+		arg.PeerID,
+		arg.Rx,
+		arg.Tx,
+	)
+	var i PeerStat
+	err := row.Scan(
+		&i.ID,
+		&i.TimestampMs,
+		&i.PeerID,
+		&i.Rx,
+		&i.Tx,
+	)
+	return i, err
+}
+
+const removeOldStats = `-- name: RemoveOldStats :exec
+DELETE FROM peer_stats
+WHERE timestamp_ms <= ?1
+`
+
+func (q *Queries) RemoveOldStats(ctx context.Context, oldestMs int64) error {
+	_, err := q.db.ExecContext(ctx, removeOldStats, oldestMs)
+	return err
+}
+
 const removePeer = `-- name: RemovePeer :execrows
 DELETE FROM peers
 WHERE public_key_base64 = ?1
@@ -309,7 +396,7 @@ SET
     persistent_keepalive = ?4,
     owner = ?5
 WHERE public_key_base64 = ?6
-RETURNING id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner
+RETURNING id, public_key_base64, is_enabled, preshared_key_base64, endpoint, persistent_keepalive, owner, latest_handshake_at, latest_endpoint
 `
 
 type UpdatePeerParams struct {
@@ -339,6 +426,30 @@ func (q *Queries) UpdatePeer(ctx context.Context, arg UpdatePeerParams) (Peer, e
 		&i.Endpoint,
 		&i.PersistentKeepalive,
 		&i.Owner,
+		&i.LatestHandshakeAt,
+		&i.LatestEndpoint,
 	)
 	return i, err
+}
+
+const updatePeerHandshakeData = `-- name: UpdatePeerHandshakeData :execrows
+UPDATE peers
+SET
+    latest_handshake_at = ?1,
+    latest_endpoint = ?2
+WHERE id = ?3
+`
+
+type UpdatePeerHandshakeDataParams struct {
+	LatestHandshakeAt *time.Time
+	LatestEndpoint    *string
+	ID                int64
+}
+
+func (q *Queries) UpdatePeerHandshakeData(ctx context.Context, arg UpdatePeerHandshakeDataParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updatePeerHandshakeData, arg.LatestHandshakeAt, arg.LatestEndpoint, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

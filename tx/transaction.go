@@ -61,5 +61,16 @@ func (t Transactional) Do(ctx context.Context) error {
 	if t.Commit == nil {
 		return nil
 	}
-	return t.Commit(ctx)
+	if err := t.Commit(ctx); err != nil {
+		if t.Rollback == nil {
+			return err
+		}
+		rbErr := t.Rollback(ctx)
+		if rbErr != nil {
+			return &RollbackError{rbErr, err}
+		} else {
+			return err
+		}
+	}
+	return nil
 }

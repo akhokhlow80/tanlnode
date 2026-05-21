@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
@@ -28,12 +29,14 @@ func (node *node) registerPeerHandlers(mux *http.ServeMux) {
 }
 
 type PeerResponse struct {
-	PublicKeyBase64     string `json:"public_key_base64"`
-	IsEnabled           bool   `json:"is_enabled"`
-	PresharedKeyBase64  string `json:"preshared_key_base64"` // optional
-	Endpoint            string `json:"endpoint"`             // optional
-	PersistentKeepalive int64  `json:"persistent_keepalive"` // optional
-	Owner               string `json:"owner"`                // optional
+	PublicKeyBase64     string     `json:"public_key_base64"`
+	IsEnabled           bool       `json:"is_enabled"`
+	PresharedKeyBase64  string     `json:"preshared_key_base64"` // optional
+	Endpoint            string     `json:"endpoint"`             // optional
+	PersistentKeepalive int64      `json:"persistent_keepalive"` // optional
+	Owner               string     `json:"owner"`                // optional
+	LatestHandshake     *time.Time `json:"latest_handshake"`     // optional
+	LatestEndpoint      string     `json:"latest_endpoint"`      // optional
 }
 
 func (resp *PeerResponse) fromDB(p *sqlgen.Peer) {
@@ -43,6 +46,10 @@ func (resp *PeerResponse) fromDB(p *sqlgen.Peer) {
 	resp.Endpoint = p.Endpoint
 	resp.PersistentKeepalive = p.PersistentKeepalive
 	resp.Owner = p.Owner
+	resp.LatestHandshake = p.LatestHandshakeAt
+	if p.LatestEndpoint != nil {
+		resp.LatestEndpoint = *p.LatestEndpoint
+	}
 }
 
 type AddPeerRequest struct {
@@ -201,6 +208,9 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 					subnet.Tree.Delete(subnet.Prefix)
 				}
 			}
+
+			node.peerStatsCache.Remove(publicKey)
+
 			return err
 		},
 		Action: func(ctx context.Context) error {
@@ -288,7 +298,7 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 			for _, subnet := range parsedSubnets {
 				wgAllowedIPs = append(wgAllowedIPs, subnet.Prefix)
 			}
-			err = node.wg.PutPeer(&wg.Peer{
+			err = node.wg.PutPeer(&wg.PeerConfig{
 				PublicKey:           publicKey,
 				PresharedKey:        presharedKey,
 				Endpoint:            req.Endpoint,
@@ -310,6 +320,8 @@ func (node *node) apiAddPeer(w http.ResponseWriter, r *http.Request) {
 			}
 
 			endpointPort = node.cfg.WGEndpointPorts[endpointPortIndex.Int64()]
+
+			node.peerStatsCache.PutNew(publicKey, dbPeer.ID)
 
 			return nil
 		},
@@ -383,7 +395,7 @@ func (node *node) listPeers(w http.ResponseWriter, r *http.Request) {
 		ownerOrNil = nil
 	}
 
-	sqlPeers, err := func() ([]sqlgen.Peer, error) {
+	dbPeers, err := func() ([]sqlgen.Peer, error) {
 		defer node.db.RUnlock()
 		node.db.RLock()
 		return node.db.GetPeers(r.Context(), ownerOrNil)
@@ -394,9 +406,9 @@ func (node *node) listPeers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var peers []PeerResponse
-	for _, sqlPeer := range sqlPeers {
+	for _, dbPeer := range dbPeers {
 		var peer PeerResponse
-		peer.fromDB(&sqlPeer)
+		peer.fromDB(&dbPeer)
 		peers = append(peers, peer)
 	}
 
@@ -601,7 +613,7 @@ func (node *node) apiUpdatePeer(w http.ResponseWriter, r *http.Request) {
 
 			if updatePeer.IsEnabled {
 				// Add new to wg
-				if err := node.wg.PutPeer(&wg.Peer{
+				if err := node.wg.PutPeer(&wg.PeerConfig{
 					PublicKey:           publicKey,
 					PresharedKey:        presharedKey,
 					Endpoint:            req.Endpoint,

@@ -60,6 +60,12 @@ definitions:
         type: string
       is_enabled:
         type: boolean
+      latest_endpoint:
+        description: optional
+        type: string
+      latest_handshake:
+        description: optional
+        type: string
       owner:
         description: optional
         type: string
@@ -92,6 +98,15 @@ definitions:
         type: boolean
       prefix:
         type: string
+    type: object
+  main.TransferStatResponse:
+    properties:
+      public_key_base64:
+        type: string
+      rx:
+        type: integer
+      tx:
+        type: integer
     type: object
   main.UpdatePeerRequest:
     properties:
@@ -138,8 +153,8 @@ definitions:
             description: based on configuration (optional)
             type: integer
           preshared_key:
-            description: set only if preshared key was given, or random preshared
-              key generation was requested
+            description: optional; set only if preshared key was given, or random
+              preshared key generation was requested
             type: string
           public_key:
             type: string
@@ -148,6 +163,37 @@ definitions:
 info:
   contact: {}
 paths:
+  /api/v1/owners/{owner}/stat:
+    get:
+      parameters:
+      - description: start of the period
+        in: query
+        name: from_ms
+        type: number
+      - description: end of the period; 0 means no limit
+        in: query
+        name: to_ms
+        type: number
+      - description: owner
+        in: query
+        name: owner
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/main.TransferStatResponse'
+            type: array
+        "400":
+          description: Invalid period
+          schema:
+            $ref: '#/definitions/main.APIError'
+      summary: Get total stat for multiple peers
+      tags:
+      - stats
   /api/v1/peers:
     get:
       description: Returns a list of peers, optionally filtered by owner
@@ -271,6 +317,40 @@ paths:
       summary: Update a peer
       tags:
       - peers
+  /api/v1/peers/{pubkey}/stat:
+    get:
+      parameters:
+      - description: start of the period
+        in: query
+        name: from_ms
+        type: number
+      - description: end of the period; 0 means no limit
+        in: query
+        name: to_ms
+        type: number
+      - description: Peer key
+        in: path
+        name: pubkey
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/main.TransferStatResponse'
+        "400":
+          description: Invalid period
+          schema:
+            $ref: '#/definitions/main.APIError'
+        "404":
+          description: Peer not found
+          schema:
+            $ref: '#/definitions/main.APIError'
+      summary: Get total stat for peer
+      tags:
+      - stats
   /api/v1/peers/{pubkey}/subnets:
     get:
       consumes:

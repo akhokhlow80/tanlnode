@@ -1,3 +1,5 @@
+--- ======= Subnets ======= 
+
 -- name: AddSubnet :one
 INSERT INTO subnets (
     prefix,
@@ -28,6 +30,8 @@ WHERE id = @id;
 -- name: GetPeerSubnets :many
 SELECT * FROM subnets
 WHERE peer_id = @peer_id;
+
+--- ======= Peers ======= 
 
 -- name: AddPeer :one
 INSERT INTO peers (
@@ -71,3 +75,35 @@ SET
     owner = @owner
 WHERE public_key_base64 = @public_key_base64
 RETURNING *;
+
+-- name: UpdatePeerHandshakeData :execrows
+UPDATE peers
+SET
+    latest_handshake_at = @latest_handshake_at,
+    latest_endpoint = @latest_endpoint
+WHERE id = @id;
+
+--- ======= Stats ======= 
+
+-- name: PutPeerStat :one
+INSERT INTO peer_stats (
+    timestamp_ms,
+    peer_id,
+    rx,
+    tx
+) VALUES (
+    @timestamp_ms,
+    @peer_id,
+    @rx,
+    @tx
+) RETURNING *;
+
+-- name: GetLastPeerStat :one
+SELECT * FROM peer_stats
+WHERE peer_id = @peer_id AND coalesce(timestamp_ms <= sqlc.narg('until_ms'), TRUE)
+ORDER BY timestamp_ms DESC
+LIMIT 1;
+
+-- name: RemoveOldStats :exec
+DELETE FROM peer_stats
+WHERE timestamp_ms <= @oldest_ms;

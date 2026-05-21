@@ -15,6 +15,54 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/v1/owners/{owner}/stat": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stats"
+                ],
+                "summary": "Get total stat for multiple peers",
+                "parameters": [
+                    {
+                        "type": "number",
+                        "description": "start of the period",
+                        "name": "from_ms",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "end of the period; 0 means no limit",
+                        "name": "to_ms",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "owner",
+                        "name": "owner",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/main.TransferStatResponse"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid period",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/peers": {
             "get": {
                 "description": "Returns a list of peers, optionally filtered by owner",
@@ -195,6 +243,58 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/peers/{pubkey}/stat": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "stats"
+                ],
+                "summary": "Get total stat for peer",
+                "parameters": [
+                    {
+                        "type": "number",
+                        "description": "start of the period",
+                        "name": "from_ms",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "end of the period; 0 means no limit",
+                        "name": "to_ms",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Peer key",
+                        "name": "pubkey",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/main.TransferStatResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid period",
+                        "schema": {
+                            "$ref": "#/definitions/main.APIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Peer not found",
                         "schema": {
                             "$ref": "#/definitions/main.APIError"
                         }
@@ -420,6 +520,14 @@ const docTemplate = `{
                 "is_enabled": {
                     "type": "boolean"
                 },
+                "latest_endpoint": {
+                    "description": "optional",
+                    "type": "string"
+                },
+                "latest_handshake": {
+                    "description": "optional",
+                    "type": "string"
+                },
                 "owner": {
                     "description": "optional",
                     "type": "string"
@@ -466,6 +574,20 @@ const docTemplate = `{
                 },
                 "prefix": {
                     "type": "string"
+                }
+            }
+        },
+        "main.TransferStatResponse": {
+            "type": "object",
+            "properties": {
+                "public_key_base64": {
+                    "type": "string"
+                },
+                "rx": {
+                    "type": "integer"
+                },
+                "tx": {
+                    "type": "integer"
                 }
             }
         },
@@ -531,7 +653,7 @@ const docTemplate = `{
                             "type": "integer"
                         },
                         "preshared_key": {
-                            "description": "set only if preshared key was given, or random preshared key generation was requested",
+                            "description": "optional; set only if preshared key was given, or random preshared key generation was requested",
                             "type": "string"
                         },
                         "public_key": {

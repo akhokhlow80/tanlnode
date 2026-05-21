@@ -1,15 +1,20 @@
 package wg
 
 import (
-	"log"
+	"akhokhlow80/tanlnode/cmd"
+	"akhokhlow80/tanlnode/peerstats"
+	"bytes"
+	"fmt"
 	"net/netip"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
+
+// TODO: context???
 
 type Service struct {
 	ifce        string
@@ -21,7 +26,7 @@ func NewService(interfaceName string, wgPath string, wgNetNSPath string) Service
 	return Service{ifce: interfaceName, wgExecPath: wgPath, wgNetNSPath: wgNetNSPath}
 }
 
-type Peer struct {
+type PeerConfig struct {
 	PublicKey           wgtypes.Key
 	PresharedKey        *wgtypes.Key
 	Endpoint            string // optional
@@ -29,7 +34,7 @@ type Peer struct {
 	AllowedIPs          []netip.Prefix
 }
 
-func (s *Service) PutPeer(p *Peer) error {
+func (s *Service) PutPeer(p *PeerConfig) error {
 	args := []string{"set", s.ifce, "peer", p.PublicKey.String()}
 	if p.PresharedKey != nil {
 		tempFile, err := os.CreateTemp("", "preshared-key")
@@ -68,31 +73,103 @@ func (s *Service) PutPeer(p *Peer) error {
 		args = append(args, "allowed-ips", sb.String())
 	}
 
-	return s.execWGCmd(args)
+	_, err := s.execWGCmd(true, args)
+	return err
 }
 
 func (s *Service) RemovePeer(publicKey wgtypes.Key) error {
-	return s.execWGCmd([]string{"set", s.ifce, "peer", publicKey.String(), "remove"})
+	_, err := s.execWGCmd(true, []string{"set", s.ifce, "peer", publicKey.String(), "remove"})
+	return err
 }
 
-func (s *Service) execWGCmd(wgArgs []string) error {
-	var (
-		args []string
-		cmd  string
-	)
-	if len(s.wgNetNSPath) != 0 {
-		cmd = "nsenter"
-		args = []string{"--net=" + s.wgNetNSPath, "--", s.wgExecPath}
-		args = append(args, wgArgs...)
-	} else {
-		cmd = s.wgExecPath
-		args = wgArgs
-	}
-	log.Printf("[#] %s %s", cmd, strings.Join(args, " "))
-	output, err := exec.Command(cmd, args...).CombinedOutput()
+type PeerStat struct {
+	PublicKey wgtypes.Key
+	peerstats.Stat
+}
+
+func (s *Service) GetPeerStats() ([]PeerStat, error) {
+	output, err := s.execWGCmd(false, []string{"show", s.ifce, "dump"})
 	if err != nil {
-		log.Printf("%s failed: %s: %s", cmd, err, output)
-		return err
+		return nil, err
 	}
-	return nil
+
+	var peers []PeerStat
+
+	firstLine := true
+	for line := range bytes.SplitSeq(output, []byte{'\n'}) {
+		// skip first line
+		if firstLine {
+			firstLine = false
+			continue
+		}
+		if len(line) == 0 {
+			continue
+		}
+
+		columns := bytes.Split(line, []byte{'\t'})
+		if len(columns) < 8 {
+			return nil, fmt.Errorf("Invalid line in wg output: `%s`", line)
+		}
+
+		pubkey := string(columns[0])
+		endpoint := string(columns[2])
+		latestHandshake := string(columns[4])
+		transferRx := string(columns[5])
+		transferTx := string(columns[6])
+
+		parsedPubkey, err := wgtypes.ParseKey(pubkey)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"Failed to parse public key `%s` from wg: %s",
+				pubkey,
+				err,
+			)
+		}
+		if endpoint == "(none)" {
+			endpoint = ""
+		}
+		parsedLatestHandshake, err := strconv.ParseInt(latestHandshake, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"Failed to parse latest-handshake `%s` from wg: %s",
+				latestHandshake,
+				err,
+			)
+		}
+		// prevent Jan 1 1970
+		var parsedLatestHandshakeTime time.Time
+		if parsedLatestHandshake != 0 {
+			parsedLatestHandshakeTime = time.Unix(parsedLatestHandshake, 0).UTC()
+		}
+		parsedTransferRx, err := strconv.ParseInt(transferRx, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"Failed to parse transfer-rx `%s` from wg: %s",
+				transferRx,
+				err,
+			)
+		}
+		parsedTransferTx, err := strconv.ParseInt(transferTx, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"Failed to parse transfer-tx `%s` from wg: %s",
+				transferTx,
+				err,
+			)
+		}
+		peers = append(peers, PeerStat{
+			PublicKey: parsedPubkey,
+			Stat: peerstats.Stat{
+				LatestEndpoint:  endpoint,
+				LatestHandshake: parsedLatestHandshakeTime,
+				Tx:              parsedTransferTx,
+				Rx:              parsedTransferRx,
+			},
+		})
+	}
+	return peers, nil
+}
+
+func (s *Service) execWGCmd(verbose bool, wgArgs []string) ([]byte, error) {
+	return cmd.Exec(s.wgNetNSPath, verbose, s.wgExecPath, wgArgs)
 }

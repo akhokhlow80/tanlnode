@@ -4,6 +4,10 @@
 
 package sqlgen
 
+import (
+	"time"
+)
+
 type Peer struct {
 	ID                  int64
 	PublicKeyBase64     string
@@ -12,6 +16,16 @@ type Peer struct {
 	Endpoint            string
 	PersistentKeepalive int64
 	Owner               string
+	LatestHandshakeAt   *time.Time
+	LatestEndpoint      *string
+}
+
+type PeerStat struct {
+	ID          int64
+	TimestampMs int64
+	PeerID      int64
+	Rx          int64
+	Tx          int64
 }
 
 type Subnet struct {
